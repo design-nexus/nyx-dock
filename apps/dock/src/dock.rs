@@ -415,6 +415,42 @@ fn refresh(s: &Rc<Shared>) {
     }
 }
 
+/// What folder and Trash tiles (and drop targets) need from a dock. `folder` is the
+/// folder's place in the settings.
+fn host(s: &Rc<Shared>, d: &Rc<Dock>, folder: Option<usize>) -> Rc<crate::stacks::Host> {
+    let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+    let hold = Box::new(move |on: bool| {
+        let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
+        if on {
+            close_preview(&s, &d);
+            d.holds.set(d.holds.get() + 1);
+            cancel_timer(&d);
+        } else {
+            d.holds.set(d.holds.get().saturating_sub(1));
+            evaluate(&s, &d);
+        }
+    });
+    let ws = Rc::downgrade(s);
+    let remove = Box::new(move || {
+        let (Some(s), Some(i)) = (ws.upgrade(), folder) else { return };
+        if i < s.config.borrow().folders.len() {
+            s.config.borrow_mut().folders.remove(i);
+            save(&s);
+            let s2 = s.clone();
+            glib::idle_add_local_once(move || rebuild_docks(&s2));
+        }
+    });
+    let ws = Rc::downgrade(s);
+    let set_sort = Box::new(move |sort| {
+        let (Some(s), Some(i)) = (ws.upgrade(), folder) else { return };
+        if let Some(f) = s.config.borrow_mut().folders.get_mut(i) {
+            f.sort = sort;
+        }
+        save(&s);
+    });
+    Rc::new(crate::stacks::Host { hold, remove, set_sort, side: popover_side(d.eff.position), icon_size: d.eff.icon_size as i32 })
+}
+
 /// One app's widgets.
 struct Tile {
     key: String,
@@ -444,6 +480,37 @@ fn fill(s: &Rc<Shared>, d: &Rc<Dock>) {
     *d.tiles.borrow_mut() = tiles;
     for t in d.tiles.borrow().iter() {
         update_tile(s, d, t);
+    }
+    let config = s.config.borrow().clone();
+    if !config.folders.is_empty() || config.trash {
+        let sep = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        sep.add_css_class("dock-sep");
+        d.bar.append(&sep);
+    }
+    for (i, folder) in config.folders.iter().enumerate() {
+        d.bar.append(&crate::stacks::folder_tile(folder, host(s, d, Some(i))));
+    }
+    if config.trash {
+        d.bar.append(&crate::stacks::trash_tile(host(s, d, None)));
+    }
+    // For screenshots on a test output: open the first folder without a pointer.
+    if std::env::var_os("NYX_DOCK_TEST_FOLDER").is_some() {
+        let found = d.bar.last_child().and_then(|c| {
+            let mut w = Some(c);
+            while let Some(x) = w {
+                if x.has_css_class("dock-folder") {
+                    return Some(x);
+                }
+                w = x.prev_sibling();
+            }
+            None
+        });
+        if let Some(tile) = found {
+            glib::timeout_add_local_once(Duration::from_millis(800), move || {
+                // Simulate a click by activating the tile's gesture path.
+                tile.activate_action("folder-test.open", None).ok();
+            });
+        }
     }
     // For screenshots on a test output: open one app's menu without a pointer.
     if let Ok(key) = std::env::var("NYX_DOCK_TEST_MENU") {
@@ -535,6 +602,19 @@ fn new_tile(s: &Rc<Shared>, d: &Rc<Dock>, item: &Item) -> Option<Tile> {
         schedule_close_preview(&s, &d);
     });
     root.add_controller(motion);
+
+    if !key.starts_with("class:") {
+        let drop = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+        let k = key.clone();
+        drop.connect_drop(move |_, value, _, _| {
+            let Ok(list) = value.get::<gdk::FileList>() else { return false };
+            let uris: Vec<String> = list.files().iter().map(|f| f.uri().to_string()).collect();
+            launch::open_with(&k, &uris);
+            true
+        });
+        crate::stacks::hold_while_dragging(&drop, &root, host(s, d, None));
+        root.add_controller(drop);
+    }
     Some(Tile { key, root, overlay, image, dots })
 }
 

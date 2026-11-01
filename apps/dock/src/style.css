@@ -212,3 +212,189 @@ popover.dock-menu > contents {
   background: @theme_accent;
   color: @theme_on_accent;
 }
+
+/* Folders and Trash, after a thin line. */
+.dock-sep {
+  min-width: 1px;
+  min-height: 1px;
+  background: @theme_border;
+  margin: 6px 4px 12px;
+}
+
+window.dock-left .dock-sep,
+window.dock-right .dock-sep {
+  margin: 4px 6px;
+}
+
+.dock-item.drop-hover {
+  background: alpha(@theme_accent, 0.16);
+}
+
+.stack-thumb {
+  border-radius: 6px;
+  background: alpha(@theme_text, 0.05);
+}
+
+.stack-card {
+  border: 1.5px solid @theme_card;
+  border-radius: 5px;
+  box-shadow: 0 1px 3px alpha(black, 0.35);
+}
+
+.stack-card-0 { transform: translateY(2px); }
+.stack-card-1 { transform: translateX(4px) rotate(6deg); }
+.stack-card-2 { transform: translateX(-4px) rotate(-10deg); }
+
+.stack-count {
+  font-size: 10px;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  color: @theme_dim_text;
+  background: @theme_raised;
+  border-radius: 4px;
+  padding: 0 4px;
+  margin: 0 -2px 1px 0;
+  box-shadow: 0 0 0 1.5px @theme_card;
+}
+
+popover.dock-stack > contents,
+popover.dock-menu > contents {
+  background: @theme_popover;
+  border: 1px solid @theme_border;
+  border-radius: 15px;
+  box-shadow: 0 16px 40px alpha(black, 0.5);
+}
+
+popover.dock-stack > contents {
+  padding: 6px;
+}
+
+popover.dock-stack > arrow,
+popover.dock-menu > arrow {
+  background: @theme_popover;
+  border: 1px solid @theme_border;
+}
+
+.stack-header {
+  padding: 4px 4px 6px 8px;
+}
+
+.stack-title {
+  font-weight: 600;
+}
+
+.stack-n,
+.stack-when {
+  color: @theme_text_tertiary;
+  font-size: 11.5px;
+  font-feature-settings: "tnum";
+}
+
+.stack-when {
+  font-size: 10.5px;
+}
+
+.stack-sort {
+  padding: 2px;
+  border-radius: 7px;
+  background: alpha(@theme_text, 0.035);
+}
+
+.stack-sort button {
+  min-width: 28px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 5px;
+  background: none;
+  color: @theme_dim_text;
+}
+
+.stack-sort button:checked {
+  background: @theme_raised;
+  color: @theme_text;
+  box-shadow: 0 1px 3px alpha(black, 0.3);
+}
+
+.stack-header button.flat {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 7px;
+  color: @theme_dim_text;
+}
+
+.stack-grid {
+  padding: 0 4px 4px;
+}
+
+.stack-file,
+.stack-row {
+  padding: 8px 4px 6px;
+  border-radius: 7px;
+  transition: background 120ms ease-out;
+}
+
+.stack-row {
+  padding: 4px 8px;
+  min-height: 36px;
+}
+
+.stack-file:hover,
+.stack-row:hover {
+  background: alpha(@theme_accent, 0.14);
+}
+
+.stack-name {
+  font-size: 11.5px;
+}
+
+.stack-empty {
+  color: @theme_dim_text;
+  padding: 24px 40px;
+}
+
+/* The fan has no panel of its own: labels and pictures over the desktop. */
+popover.dock-fan > contents {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.fan-label {
+  padding: 4px 9px;
+  border-radius: 7px;
+  background: @theme_popover;
+  border: 1px solid @theme_border;
+  font-size: 12px;
+  box-shadow: 0 4px 12px alpha(black, 0.4);
+}
+
+.fan-row:hover .fan-label {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border-color: transparent;
+}
+
+.fan-row .stack-thumb {
+  background: @theme_popover;
+  border: 1px solid @theme_border;
+  border-radius: 8px;
+  box-shadow: 0 6px 16px alpha(black, 0.45);
+}
+
+.trash-menu {
+  padding: 4px;
+}
+
+.trash-menu button {
+  border-radius: 7px;
+  padding: 6px 10px;
+}
+
+.trash-menu button label {
+  font-weight: 400;
+}
+
+.trash-menu button.trash-empty.armed {
+  color: @theme_danger;
+}

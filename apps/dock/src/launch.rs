@@ -112,3 +112,39 @@ pub fn close(address: &str) {
         &format!("closewindow address:0x{address}"),
     );
 }
+
+/// Open files or folders with an app (dropped on its icon).
+pub fn open_with(id: &str, uris: &[String]) {
+    if uris.is_empty() {
+        return;
+    }
+    if has("uwsm-app") {
+        let mut args = vec!["uwsm-app".to_string(), "--".into(), "gtk-launch".into(), format!("{id}.desktop")];
+        args.extend(uris.iter().cloned());
+        spawn(&args);
+        return;
+    }
+    let Some(app) = info(id) else { return };
+    let files: Vec<gtk::gio::File> = uris.iter().map(|u| gtk::gio::File::for_uri(u)).collect();
+    let ctx = gtk::gdk::Display::default().map(|d| d.app_launch_context());
+    if let Err(e) = app.launch(&files, ctx.as_ref()) {
+        eprintln!("nyx-dock: couldn't open the files with {id}: {e}");
+    }
+}
+
+/// Open a file or folder with its default app (folders: the file manager).
+pub fn open_default(uri: &str) {
+    if has("uwsm-app") && has("xdg-open") {
+        spawn(&["uwsm-app".into(), "--".into(), "xdg-open".into(), uri.into()]);
+        return;
+    }
+    let ctx = gtk::gdk::Display::default().map(|d| d.app_launch_context());
+    if let Err(e) = gtk::gio::AppInfo::launch_default_for_uri(uri, ctx.as_ref()) {
+        eprintln!("nyx-dock: couldn't open {uri}: {e}");
+    }
+}
+
+/// Empty the Trash.
+pub fn empty_trash() {
+    spawn(&["gio".into(), "trash".into(), "--empty".into()]);
+}

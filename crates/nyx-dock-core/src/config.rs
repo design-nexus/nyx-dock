@@ -55,6 +55,69 @@ pub enum Running {
 
 pub const ICON_SIZES: std::ops::RangeInclusive<u32> = 24..=96;
 
+/// How a folder looks in the dock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FolderLook {
+    /// Its newest files, stacked.
+    #[default]
+    Stack,
+    /// The folder icon.
+    Folder,
+}
+
+/// What clicking a folder does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FolderOpen {
+    #[default]
+    Grid,
+    Fan,
+    List,
+    /// Open the folder in the file manager.
+    Files,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Sort {
+    /// Newest first.
+    #[default]
+    Date,
+    Name,
+    Kind,
+}
+
+/// A folder in the dock (a shortcut: removing it never touches the folder).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Folder {
+    /// `~` stands for the home folder.
+    pub path: String,
+    pub look: FolderLook,
+    pub open: FolderOpen,
+    pub sort: Sort,
+    /// An icon name to show instead (with `look = "folder"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+impl Default for Folder {
+    fn default() -> Self {
+        Folder { path: "~/Downloads".into(), look: FolderLook::Stack, open: FolderOpen::Grid, sort: Sort::Date, icon: None }
+    }
+}
+
+impl Folder {
+    pub fn expanded(&self, home: &Path) -> PathBuf {
+        match self.path.strip_prefix("~/") {
+            Some(rest) => home.join(rest),
+            None if self.path == "~" => home.to_path_buf(),
+            None => PathBuf::from(&self.path),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -69,6 +132,10 @@ pub struct Config {
     /// Milliseconds the pointer rests on an app before its windows preview.
     pub preview_delay_ms: u32,
     pub pinned: Vec<String>,
+    /// Folders after the apps (Downloads by default).
+    pub folders: Vec<Folder>,
+    /// The Trash at the end.
+    pub trash: bool,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub monitors: BTreeMap<String, MonitorConfig>,
 }
@@ -84,6 +151,8 @@ impl Default for Config {
             previews: true,
             preview_delay_ms: 350,
             pinned: Vec::new(),
+            folders: vec![Folder::default()],
+            trash: true,
             monitors: BTreeMap::new(),
         }
     }
@@ -251,6 +320,22 @@ running = "monitor"
         assert_eq!(c.pinned, vec!["b"]);
         c.set_pinned("X|Y|", "HDMI-A-1", "b", true, Some(9));
         assert_eq!(c.pinned, vec!["b"], "pinning twice keeps one");
+    }
+
+    #[test]
+    fn folders() {
+        let c: Config = toml::from_str("").unwrap();
+        assert_eq!(c.folders, vec![Folder::default()], "Downloads by default");
+        assert!(c.trash);
+        let c: Config = toml::from_str(
+            "trash = false\n[[folders]]\npath = \"~/Projects\"\nlook = \"folder\"\nopen = \"list\"\nsort = \"name\"",
+        )
+        .unwrap();
+        assert_eq!(c.folders.len(), 1);
+        assert_eq!(c.folders[0].open, FolderOpen::List);
+        assert_eq!(c.folders[0].expanded(Path::new("/home/k")), PathBuf::from("/home/k/Projects"));
+        let none: Config = toml::from_str("folders = []").unwrap();
+        assert!(none.folders.is_empty(), "an empty list means no folders");
     }
 
     #[test]

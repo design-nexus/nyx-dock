@@ -7,5 +7,6 @@
 
 pub mod apps;
 pub mod config;
+pub mod files;
 pub mod hide;
 pub mod items;
