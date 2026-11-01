@@ -22,21 +22,39 @@ nyx-dock --disable   # stop it and turn Omarchy's dock back on
 
 ## What it does
 
-- Pinned apps first, then the apps that are running, in the order they started.
+- Pinned apps first, then the apps that are running, in the order they started; then
+  your folders (Downloads by default) and the Trash.
 - Click an app to open it, or to bring its most recent window forward (the one on the
   workspace in front of you if it has one). Click it again to go through its other
   windows. Middle-click opens a new window.
+- Rest the pointer on a running app to see its windows, including those on other
+  workspaces and minimized ones; click one to go to it, or close it from its card.
 - A dot under a running app, two for more than one window; the app you're in gets an
   accent bar. Minimized windows come back to the workspace you're on.
 - Badges and progress from apps that use the Unity launcher API, and a warning-colored
   dot for a window asking for attention.
-- Right-click for the app's own actions (New Private Window, Compose, …), New window,
-  Keep in dock / Remove from dock, and Quit or Close all windows.
+- Right-click for the app's own actions (New Private Window, Compose, …), Keep in dock /
+  Remove from dock, and Quit or Close all windows. A player (Nyx Music, a browser
+  playing video, …) also shows what's playing with its controls.
+- Drag an app along the dock to pin it in that place; drop a pinned app or a folder
+  outside the dock to remove it. Drop files on an app to open them with it, on a folder
+  to copy them there, on the Trash to trash them.
+- Folders show their newest files stacked (or the folder icon) with a count, and open as
+  a grid, a fan, a list or in your file manager, sorted by date, name or kind. Click a
+  file to open it, or drag it out to another app. Removing a folder from the dock never
+  touches the folder.
+- Trash shows when it has something in it, opens in your file manager, and empties from
+  its menu after a second click.
 - Intelligent hiding: the dock hides while a window overlaps it or something is
   fullscreen, and comes back when the pointer reaches the screen edge. It stays up while
-  a menu is open.
+  a menu, preview or drag is open.
 - One dock per screen, each with its own settings if you want them.
 - Windows on internal workspaces (tests, scratch outputs) are left out.
+
+Window previews use the standard Wayland capture protocols (`ext-image-copy-capture`), so
+nothing extra is installed; a window that hasn't been on screen since it opened shows its
+last drawn frame. Folder thumbnails come from the shared thumbnail cache, and images
+without one get one made and saved there.
 
 Apps start the way Omarchy starts them (`uwsm-app -- gtk-launch`), each in its own scope,
 so restarting the dock never closes them.
@@ -52,7 +70,16 @@ hide = "smart"          # smart | always | never
 running = "all"         # all | monitor (only apps with a window on that screen)
 position = "bottom"     # bottom | top | left | right
 hide_delay_ms = 600
+previews = true         # windows of a running app on hover
+preview_delay_ms = 350
+trash = true
 pinned = ["io.github.design_nexus.nyx.Files", "firefox"]
+
+[[folders]]
+path = "~/Downloads"
+look = "stack"          # stack | folder
+open = "grid"           # grid | fan | list | files
+sort = "date"           # date | name | kind
 
 # One screen: by its stable id (make|model|serial) or its connector name.
 [monitors."DP-2"]
@@ -74,7 +101,9 @@ cargo test --locked --workspace
 ```
 
 `nyx-dock --only HEADLESS-1` shows the dock on one output only, and `NYX_DOCK_DEBUG=1`
-prints what it decides. The service is `nyx-dock.service` (systemd user unit).
+prints what it decides. For screenshots without a pointer, `NYX_DOCK_TEST_PREVIEW=<app>`,
+`NYX_DOCK_TEST_MENU=<app>` and `NYX_DOCK_TEST_FOLDER=1` open a preview, a menu or the first
+folder at start. The service is `nyx-dock.service` (systemd user unit).
 
 ## Remove
 

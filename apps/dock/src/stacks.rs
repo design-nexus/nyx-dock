@@ -267,6 +267,28 @@ pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
         tile.insert_action_group("folder-test", Some(&actions));
     }
 
+    // Drag the folder out: into an app it's the folder; let go elsewhere, it leaves the dock.
+    let drag = gtk::DragSource::new();
+    drag.set_actions(gdk::DragAction::COPY | gdk::DragAction::LINK);
+    let dir_g = dir.clone();
+    drag.connect_prepare(move |_, _, _| {
+        let file = gio::File::for_path(&dir_g);
+        Some(gdk::ContentProvider::for_value(&gdk::FileList::from_array(std::slice::from_ref(&file)).to_value()))
+    });
+    let h = host.clone();
+    drag.connect_drag_begin(move |_, _| (h.hold)(true));
+    let h = host.clone();
+    drag.connect_drag_end(move |_, _, _| (h.hold)(false));
+    let h = host.clone();
+    drag.connect_drag_cancel(move |_, _, reason| {
+        if reason == gdk::DragCancelReason::NoTarget {
+            (h.remove)();
+            return true;
+        }
+        false
+    });
+    tile.add_controller(drag);
+
     // Files dropped on the folder are copied into it.
     let drop = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
     let dir_d = dir.clone();

@@ -281,6 +281,7 @@ fn new_dock(s: &Rc<Shared>, connector: &str, gmon: &gdk::Monitor, eff: Effective
     let bar = gtk::Box::new(orientation, 6);
     bar.add_css_class("dock-bar");
     window.set_child(Some(&bar));
+    let horizontal = orientation == gtk::Orientation::Horizontal;
 
     // The strip at the screen edge that brings a hidden dock back.
     let strip = gtk::Window::new();
@@ -323,6 +324,18 @@ fn new_dock(s: &Rc<Shared>, connector: &str, gmon: &gdk::Monitor, eff: Effective
             cancel_timer(&d);
         }
     });
+    let reorder = gtk::DropTarget::new(glib::BoxedAnyObject::static_type(), gdk::DragAction::MOVE);
+    let (ws2, wd2) = (Rc::downgrade(s), Rc::downgrade(&dock));
+    reorder.connect_drop(move |_, value, x, y| {
+        let (Some(s), Some(d)) = (ws2.upgrade(), wd2.upgrade()) else { return false };
+        let Ok(obj) = value.get::<glib::BoxedAnyObject>() else { return false };
+        let Ok(drag) = obj.try_borrow::<DockDrag>() else { return false };
+        let at = pin_index(&d, if horizontal { x } else { y }, &drag.0);
+        pin(&s, &d, &drag.0, true, Some(at));
+        true
+    });
+    dock.bar.add_controller(reorder);
+
     let wd = Rc::downgrade(&dock);
     motion.connect_leave(move |_| {
         if let (Some(d), Some(s)) = (wd.upgrade(), ws.upgrade()) {
@@ -449,6 +462,38 @@ fn host(s: &Rc<Shared>, d: &Rc<Dock>, folder: Option<usize>) -> Rc<crate::stacks
         save(&s);
     });
     Rc::new(crate::stacks::Host { hold, remove, set_sort, side: popover_side(d.eff.position), icon_size: d.eff.icon_size as i32 })
+}
+
+/// An app being dragged within the dock.
+struct DockDrag(String);
+
+fn pin(s: &Rc<Shared>, d: &Rc<Dock>, key: &str, pinned: bool, at: Option<usize>) {
+    let desktop = s.desktop.borrow().clone();
+    let Some(m) = desktop.monitor(&d.connector) else { return };
+    s.config.borrow_mut().set_pinned(&m.stable_id(), &m.name, key, pinned, at);
+    save(s);
+    let s2 = s.clone();
+    glib::idle_add_local_once(move || rebuild_docks(&s2));
+}
+
+/// Where a drop at `pos` (along the dock) lands among the pinned apps, not counting
+/// the app being moved.
+fn pin_index(d: &Dock, pos: f64, moving: &str) -> usize {
+    let horizontal = matches!(d.eff.position, Position::Bottom | Position::Top);
+    let mut index = 0;
+    for t in d.tiles.borrow().iter() {
+        let pinned = item_for(d, &t.key).is_some_and(|i| i.pinned);
+        if !pinned || t.key == moving {
+            continue;
+        }
+        let Some(b) = t.root.compute_bounds(&d.bar) else { continue };
+        let middle = if horizontal { b.x() + b.width() / 2.0 } else { b.y() + b.height() / 2.0 };
+        if (pos as f32) < middle {
+            break;
+        }
+        index += 1;
+    }
+    index
 }
 
 /// One app's widgets.
@@ -604,6 +649,44 @@ fn new_tile(s: &Rc<Shared>, d: &Rc<Dock>, item: &Item) -> Option<Tile> {
     root.add_controller(motion);
 
     if !key.starts_with("class:") {
+        // Drag an app along the dock to pin it there; drop it outside to unpin it.
+        let drag = gtk::DragSource::new();
+        drag.set_actions(gdk::DragAction::MOVE);
+        let k = key.clone();
+        drag.connect_prepare(move |_, _, _| {
+            Some(gdk::ContentProvider::for_value(&glib::BoxedAnyObject::new(DockDrag(k.clone())).to_value()))
+        });
+        let (ws, wd, iw) = (Rc::downgrade(s), Rc::downgrade(d), image.downgrade());
+        drag.connect_drag_begin(move |src, _| {
+            if let Some(image) = iw.upgrade() {
+                let paintable = gtk::WidgetPaintable::new(Some(&image));
+                src.set_icon(Some(&paintable), image.width() / 2, image.height() / 2);
+            }
+            if let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) {
+                close_preview(&s, &d);
+                d.holds.set(d.holds.get() + 1);
+                cancel_timer(&d);
+            }
+        });
+        let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+        drag.connect_drag_end(move |_, _, _| {
+            if let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) {
+                d.holds.set(d.holds.get().saturating_sub(1));
+                evaluate(&s, &d);
+            }
+        });
+        let (ws, wd, k) = (Rc::downgrade(s), Rc::downgrade(d), key.clone());
+        drag.connect_drag_cancel(move |_, _, reason| {
+            let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return false };
+            // Let go away from any drop target: off the dock.
+            if reason == gdk::DragCancelReason::NoTarget && item_for(&d, &k).is_some_and(|i| i.pinned) {
+                pin(&s, &d, &k, false, None);
+                return true;
+            }
+            false
+        });
+        root.add_controller(drag);
+
         let drop = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
         let k = key.clone();
         drop.connect_drop(move |_, value, _, _| {
@@ -1014,17 +1097,13 @@ fn menu(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, item: &Item) {
     });
     actions.add_action(&action);
 
-    let pin = gio::SimpleAction::new("pin", None);
+    let pin_action = gio::SimpleAction::new("pin", None);
     let (ws, wd, k, pinned) = (Rc::downgrade(s), Rc::downgrade(d), key.clone(), item.pinned);
-    pin.connect_activate(move |_, _| {
+    pin_action.connect_activate(move |_, _| {
         let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
-        let desktop = s.desktop.borrow().clone();
-        let Some(m) = desktop.monitor(&d.connector) else { return };
-        s.config.borrow_mut().set_pinned(&m.stable_id(), &m.name, &k, !pinned, None);
-        save(&s);
-        rebuild_docks(&s);
+        pin(&s, &d, &k, !pinned, None);
     });
-    actions.add_action(&pin);
+    actions.add_action(&pin_action);
 
     let quit = gio::SimpleAction::new("quit", None);
     let windows = item.windows.clone();
