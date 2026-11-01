@@ -1,0 +1,13 @@
+[workspace]
+resolver = "3"
+members = ["apps/dock", "crates/nyx-dock-core"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+authors = ["Ken Smith"]
+repository = "https://github.com/design-nexus/nyx-dock"
+
+[profile.release]
+lto = "thin"
+strip = true

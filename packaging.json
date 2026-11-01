@@ -1,0 +1,18 @@
+{
+  "application": "dock",
+  "directory": "dock",
+  "packages": [
+    "nyx-dock"
+  ],
+  "manifest": "Cargo.toml",
+  "prepare": [],
+  "binaries": [],
+  "test_commands": [
+    [
+      "cargo",
+      "test",
+      "--locked",
+      "--workspace"
+    ]
+  ]
+}

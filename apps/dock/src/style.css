@@ -1,0 +1,88 @@
+/* Nyx Dock. Colours are the shared @theme_* tokens; radii follow STYLE.md (7 / 11 / 15). */
+
+window.dock-surface,
+window.dock-edge {
+  background: transparent;
+  font-family: "Inter", sans-serif;
+}
+
+/* The margin is room for the shadow; only the bar takes clicks. */
+.dock-bar {
+  background: @theme_card;
+  border: 1px solid @theme_border;
+  border-radius: 15px;
+  padding: 6px 8px 7px;
+  box-shadow: 0 10px 28px alpha(black, 0.45), 0 1px 3px alpha(black, 0.35);
+}
+
+window.dock-bottom .dock-bar { margin: 16px 22px 10px; }
+window.dock-top .dock-bar { margin: 10px 22px 16px; }
+window.dock-left .dock-bar { margin: 22px 16px 22px 10px; padding: 8px 7px 8px 6px; }
+window.dock-right .dock-bar { margin: 22px 10px 22px 16px; padding: 8px 6px 8px 7px; }
+
+.dock-item {
+  border-radius: 7px;
+  padding: 0;
+  transition: background 120ms ease-out;
+}
+
+.dock-item:hover {
+  background: alpha(@theme_text, 0.06);
+}
+
+.dock-dots {
+  min-height: 4px;
+}
+
+.dock-dot {
+  min-width: 4px;
+  min-height: 4px;
+  border-radius: 2px;
+  background: @theme_dim_text;
+}
+
+.dock-item.focused .dock-dot {
+  background: @theme_accent;
+}
+
+.dock-item.focused .dock-dot:first-child {
+  min-width: 12px;
+}
+
+.dock-item.urgent .dock-dot {
+  background: @theme_warning;
+}
+
+.dock-badge {
+  background: @theme_danger;
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  margin: -2px -3px 0 0;
+  box-shadow: 0 0 0 2px @theme_card;
+}
+
+.dock-progress {
+  margin: 0 2px 2px;
+}
+
+.dock-progress trough {
+  min-height: 3px;
+  border-radius: 2px;
+  background: alpha(@theme_text, 0.1);
+}
+
+.dock-progress progress {
+  min-height: 3px;
+  border-radius: 2px;
+  background: @theme_accent;
+}
+
+window.dock-surface tooltip {
+  border-radius: 7px;
+}

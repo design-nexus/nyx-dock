@@ -1,0 +1,13 @@
+[package]
+name = "nyx-dock-core"
+version = "0.1.0"
+description = "The dock's logic without GTK: settings, app matching, items, hiding"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+nyx-desktop = { git = "https://github.com/design-nexus/nyx-core.git", rev = "f94be28d308e3aafd44a72ecebe45e8567bfcb1d", default-features = false }
+serde = { version = "1", features = ["derive"] }
+toml = "1"
