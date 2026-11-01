@@ -10,6 +10,7 @@ mod capture;
 mod dock;
 mod handover;
 mod launch;
+mod mpris;
 mod theme;
 
 use gtk::prelude::*;

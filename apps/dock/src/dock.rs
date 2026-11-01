@@ -445,6 +445,18 @@ fn fill(s: &Rc<Shared>, d: &Rc<Dock>) {
     for t in d.tiles.borrow().iter() {
         update_tile(s, d, t);
     }
+    // For screenshots on a test output: open one app's menu without a pointer.
+    if let Ok(key) = std::env::var("NYX_DOCK_TEST_MENU") {
+        let found = d.tiles.borrow().iter().find(|t| t.key == key).map(|t| t.root.clone());
+        if let (Some(tile), Some(it)) = (found, item_for(d, &key)) {
+            let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+            glib::timeout_add_local_once(Duration::from_millis(800), move || {
+                if let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) {
+                    menu(&s, &d, &tile, &it);
+                }
+            });
+        }
+    }
     // For screenshots on a test output: open one app's preview without a pointer.
     if let Ok(key) = std::env::var("NYX_DOCK_TEST_PREVIEW") {
         let tile = d.tiles.borrow().iter().find(|t| t.key == key).map(|t| t.root.clone());
@@ -867,9 +879,25 @@ fn menu(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, item: &Item) {
     let model = gio::Menu::new();
     let actions = gio::SimpleActionGroup::new();
 
+    // Quick panel: a player's now-playing and controls first.
+    let media = if item.running() { crate::mpris::panel(&item.key) } else { None };
+    if media.is_some() {
+        let section = gio::Menu::new();
+        let entry = gio::MenuItem::new(None, None);
+        entry.set_attribute_value("custom", Some(&"media".to_variant()));
+        section.append_item(&entry);
+        model.append_section(None, &section);
+    }
+
     let first = gio::Menu::new();
     if is_app {
-        first.append(Some(if item.running() { "New window" } else { "Open" }), Some("dock.open"));
+        // The app's own "new window" action stands in for ours.
+        let own_new = info.as_ref().is_some_and(|i| {
+            i.list_actions().iter().any(|a| matches!(a.as_str(), "new-window" | "new-empty-window" | "NewWindow"))
+        });
+        if !(item.running() && own_new) {
+            first.append(Some(if item.running() { "New window" } else { "Open" }), Some("dock.open"));
+        }
         if let Some(info) = &info {
             for a in info.list_actions() {
                 let label = info.action_name(&a);
@@ -925,6 +953,9 @@ fn menu(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, item: &Item) {
 
     tile.insert_action_group("dock", Some(&actions));
     let pop = gtk::PopoverMenu::from_model(Some(&model));
+    if let Some(media) = &media {
+        pop.add_child(media, "media");
+    }
     pop.set_parent(tile);
     pop.set_position(popover_side(d.eff.position));
     pop.add_css_class("dock-menu");

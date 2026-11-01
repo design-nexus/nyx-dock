@@ -155,3 +155,60 @@ popover.dock-preview > arrow {
 .preview-ws.current {
   color: @theme_dim_text;
 }
+
+/* Quick panel: a player's now-playing and controls, at the top of its menu. */
+popover.dock-menu > contents {
+  border-radius: 15px;
+}
+
+.quick-media {
+  padding: 8px 8px 4px;
+  min-width: 248px;
+}
+
+.quick-art {
+  border-radius: 7px;
+}
+
+.quick-title {
+  font-weight: 500;
+}
+
+.quick-artist,
+.quick-times {
+  color: @theme_dim_text;
+  font-size: 12px;
+}
+
+.quick-times {
+  font-size: 11.5px;
+  font-feature-settings: "tnum";
+  color: @theme_text_tertiary;
+}
+
+.quick-progress trough {
+  min-height: 4px;
+  border-radius: 2px;
+  background: alpha(@theme_text, 0.1);
+}
+
+.quick-progress progress {
+  min-height: 4px;
+  border-radius: 2px;
+  background: @theme_accent;
+}
+
+.quick-media button {
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 7px;
+  color: @theme_dim_text;
+}
+
+.quick-media button.quick-play {
+  min-width: 38px;
+  min-height: 38px;
+  border-radius: 999px;
+  background: @theme_accent;
+  color: @theme_on_accent;
+}
