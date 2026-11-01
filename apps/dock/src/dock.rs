@@ -47,6 +47,10 @@ struct Dock {
     bar: gtk::Box,
     edge: gtk::Window,
     items: RefCell<Vec<Item>>,
+    tiles: RefCell<Vec<Tile>>,
+    preview: RefCell<Option<Preview>>,
+    preview_timer: RefCell<Option<glib::SourceId>>,
+    preview_close: RefCell<Option<glib::SourceId>>,
     hidden: Cell<bool>,
     hover: Cell<bool>,
     /// Menus open from this dock; it stays up while any is.
@@ -300,6 +304,10 @@ fn new_dock(s: &Rc<Shared>, connector: &str, gmon: &gdk::Monitor, eff: Effective
         bar,
         edge: strip,
         items: RefCell::default(),
+        tiles: RefCell::default(),
+        preview: RefCell::default(),
+        preview_timer: RefCell::default(),
+        preview_close: RefCell::default(),
         hidden: Cell::new(false),
         hover: Cell::new(false),
         holds: Cell::new(0),
@@ -391,21 +399,62 @@ fn refresh(s: &Rc<Shared>) {
         s.orders.borrow_mut().insert(d.connector.clone(), order);
         debug(|| format!("{}: {} items", d.connector, items.len()));
         if *d.items.borrow() != items {
+            let same_apps = d.items.borrow().iter().map(|i| &i.key).eq(items.iter().map(|i| &i.key));
             *d.items.borrow_mut() = items;
-            fill(s, &d);
+            if same_apps && !d.tiles.borrow().is_empty() {
+                // Only state changed (focus, windows, badges): keep the widgets, so a
+                // hover or an open preview isn't torn down.
+                for t in d.tiles.borrow().iter() {
+                    update_tile(s, &d, t);
+                }
+            } else {
+                fill(s, &d);
+            }
         }
         evaluate(s, &d);
     }
 }
 
+/// One app's widgets.
+struct Tile {
+    key: String,
+    root: gtk::Box,
+    overlay: gtk::Overlay,
+    image: gtk::Image,
+    dots: gtk::Box,
+}
+
+fn item_for(d: &Dock, key: &str) -> Option<Item> {
+    d.items.borrow().iter().find(|i| i.key == key).cloned()
+}
+
 fn fill(s: &Rc<Shared>, d: &Rc<Dock>) {
+    close_preview(s, d);
     while let Some(child) = d.bar.first_child() {
         d.bar.remove(&child);
     }
     let items = d.items.borrow().clone();
+    let mut tiles = Vec::new();
     for item in &items {
-        if let Some(w) = item_widget(s, d, item) {
-            d.bar.append(&w);
+        if let Some(t) = new_tile(s, d, item) {
+            d.bar.append(&t.root);
+            tiles.push(t);
+        }
+    }
+    *d.tiles.borrow_mut() = tiles;
+    for t in d.tiles.borrow().iter() {
+        update_tile(s, d, t);
+    }
+    // For screenshots on a test output: open one app's preview without a pointer.
+    if let Ok(key) = std::env::var("NYX_DOCK_TEST_PREVIEW") {
+        let tile = d.tiles.borrow().iter().find(|t| t.key == key).map(|t| t.root.clone());
+        if let Some(tile) = tile {
+            let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+            glib::timeout_add_local_once(Duration::from_millis(800), move || {
+                if let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) {
+                    open_preview(&s, &d, &tile, &key);
+                }
+            });
         }
     }
     let wd = Rc::downgrade(d);
@@ -416,67 +465,38 @@ fn fill(s: &Rc<Shared>, d: &Rc<Dock>) {
     });
 }
 
-fn item_widget(s: &Rc<Shared>, d: &Rc<Dock>, item: &Item) -> Option<gtk::Widget> {
+fn new_tile(s: &Rc<Shared>, d: &Rc<Dock>, item: &Item) -> Option<Tile> {
     let class = item.key.strip_prefix("class:");
     let info = if class.is_some() { None } else { launch::info(&item.key) };
     // A pinned app that's no longer installed has nothing to show or start.
     if class.is_none() && info.is_none() {
         return None;
     }
-    let tile = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    tile.add_css_class("dock-item");
-    if item.focused {
-        tile.add_css_class("focused");
-    }
-
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    root.add_css_class("dock-item");
     let image = gtk::Image::new();
     image.set_pixel_size(d.eff.icon_size as i32);
     match info.as_ref().and_then(|i| i.icon()) {
         Some(icon) => image.set_from_gicon(&icon),
-        None => image.set_icon_name(Some(&class.unwrap_or("application-x-executable").to_lowercase())),
+        None => image.set_icon_name(Some(&fallback_icon(class.unwrap_or("")))),
     }
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&image));
-
-    let badge = s.badges.borrow().get(&item.key).cloned().unwrap_or_default();
-    if let Some(count) = badge.count {
-        let label = gtk::Label::new(Some(&if count > 99 { "99+".to_string() } else { count.to_string() }));
-        label.add_css_class("dock-badge");
-        label.set_halign(gtk::Align::End);
-        label.set_valign(gtk::Align::Start);
-        overlay.add_overlay(&label);
-    }
-    if let Some(p) = badge.progress {
-        let bar = gtk::ProgressBar::new();
-        bar.set_fraction(p);
-        bar.add_css_class("dock-progress");
-        bar.set_valign(gtk::Align::End);
-        overlay.add_overlay(&bar);
-    }
-    if item.urgent || badge.urgent {
-        tile.add_css_class("urgent");
-    }
-    tile.append(&overlay);
-
+    root.append(&overlay);
     let dots = gtk::Box::new(gtk::Orientation::Horizontal, 3);
     dots.add_css_class("dock-dots");
     dots.set_halign(gtk::Align::Center);
-    for _ in 0..item.windows.len().min(2) {
-        let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        dot.add_css_class("dock-dot");
-        dots.append(&dot);
-    }
-    tile.append(&dots);
+    root.append(&dots);
 
-    let name = info.as_ref().map(|i| i.display_name().to_string()).unwrap_or_else(|| class.unwrap_or("").to_string());
-    tile.set_tooltip_text(Some(&name));
-
+    let key = item.key.clone();
     let click = gtk::GestureClick::new();
     click.set_button(0);
-    let (ws, wd, it) = (Rc::downgrade(s), Rc::downgrade(d), item.clone());
-    let tile_weak = tile.downgrade();
+    let (ws, wd, k) = (Rc::downgrade(s), Rc::downgrade(d), key.clone());
+    let tile_weak = root.downgrade();
     click.connect_released(move |g, _, _, _| {
         let (Some(s), Some(d), Some(tile)) = (ws.upgrade(), wd.upgrade(), tile_weak.upgrade()) else { return };
+        let Some(it) = item_for(&d, &k) else { return };
+        close_preview(&s, &d);
         match g.current_button() {
             1 => activate(&s, &d, &it),
             2 if !it.key.starts_with("class:") => launch::new_instance(&it.key),
@@ -484,8 +504,342 @@ fn item_widget(s: &Rc<Shared>, d: &Rc<Dock>, item: &Item) -> Option<gtk::Widget>
             _ => {}
         }
     });
-    tile.add_controller(click);
-    Some(tile.upcast())
+    root.add_controller(click);
+
+    // Rest the pointer on a running app to see its windows.
+    let motion = gtk::EventControllerMotion::new();
+    let (ws, wd, k) = (Rc::downgrade(s), Rc::downgrade(d), key.clone());
+    let tile_weak = root.downgrade();
+    motion.connect_enter(move |_, _, _| {
+        let (Some(s), Some(d), Some(tile)) = (ws.upgrade(), wd.upgrade(), tile_weak.upgrade()) else { return };
+        hover_tile(&s, &d, &tile, &k);
+    });
+    let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+    motion.connect_leave(move |_| {
+        let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
+        if let Some(t) = d.preview_timer.borrow_mut().take() {
+            t.remove();
+        }
+        schedule_close_preview(&s, &d);
+    });
+    root.add_controller(motion);
+    Some(Tile { key, root, overlay, image, dots })
+}
+
+/// Bring a tile up to date with its item: focus, windows, badge, tooltip.
+fn update_tile(s: &Rc<Shared>, d: &Rc<Dock>, t: &Tile) {
+    let Some(item) = item_for(d, &t.key) else { return };
+    let badge = s.badges.borrow().get(&item.key).cloned().unwrap_or_default();
+    set_class(&t.root, "focused", item.focused);
+    set_class(&t.root, "urgent", item.urgent || badge.urgent);
+
+    let want = item.windows.len().min(2);
+    let mut have = 0;
+    let mut child = t.dots.first_child();
+    while let Some(c) = child {
+        have += 1;
+        child = c.next_sibling();
+    }
+    while have > want {
+        if let Some(c) = t.dots.last_child() {
+            t.dots.remove(&c);
+        }
+        have -= 1;
+    }
+    while have < want {
+        let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        dot.add_css_class("dock-dot");
+        t.dots.append(&dot);
+        have += 1;
+    }
+
+    // Badge and progress: overlays on the icon, made again each time (rare).
+    let mut child = t.overlay.first_child();
+    while let Some(c) = child {
+        child = c.next_sibling();
+        if c != t.image.clone().upcast::<gtk::Widget>() {
+            t.overlay.remove_overlay(&c);
+        }
+    }
+    if let Some(count) = badge.count {
+        let label = gtk::Label::new(Some(&if count > 99 { "99+".to_string() } else { count.to_string() }));
+        label.add_css_class("dock-badge");
+        label.set_halign(gtk::Align::End);
+        label.set_valign(gtk::Align::Start);
+        t.overlay.add_overlay(&label);
+    }
+    if let Some(p) = badge.progress {
+        let bar = gtk::ProgressBar::new();
+        bar.set_fraction(p);
+        bar.add_css_class("dock-progress");
+        bar.set_valign(gtk::Align::End);
+        t.overlay.add_overlay(&bar);
+    }
+
+    // A running app shows its windows on hover instead of a tooltip.
+    let previews = s.config.borrow().previews && item.running();
+    let name = app_name(&item.key);
+    t.root.set_tooltip_text(if previews { None } else { Some(&name) });
+}
+
+/// An icon named after a window's class, if the icon theme has one; else a generic app.
+fn fallback_icon(class: &str) -> String {
+    let name = class.to_lowercase();
+    let has = gdk::Display::default().is_some_and(|d| !name.is_empty() && gtk::IconTheme::for_display(&d).has_icon(&name));
+    if has { name } else { "application-x-executable".into() }
+}
+
+fn set_class(w: &impl IsA<gtk::Widget>, class: &str, on: bool) {
+    if on {
+        w.add_css_class(class);
+    } else {
+        w.remove_css_class(class);
+    }
+}
+
+fn app_name(key: &str) -> String {
+    match key.strip_prefix("class:") {
+        Some(class) => class.to_string(),
+        None => launch::info(key).map(|i| i.display_name().to_string()).unwrap_or_else(|| key.to_string()),
+    }
+}
+
+// ---------- Window previews ----------
+
+struct Preview {
+    key: String,
+    popover: gtk::Popover,
+}
+
+/// Preview thumbnails: up to this size in logical pixels (captured at twice that).
+const THUMB_W: i32 = 212;
+const THUMB_H: i32 = 128;
+
+fn hover_tile(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, key: &str) {
+    cancel_close_preview(d);
+    if let Some(t) = d.preview_timer.borrow_mut().take() {
+        t.remove();
+    }
+    let running = item_for(d, key).is_some_and(|i| i.running());
+    if !s.config.borrow().previews || !running || d.holds.get() > d.preview.borrow().is_some() as u32 {
+        return;
+    }
+    if d.preview.borrow().as_ref().is_some_and(|p| p.key == key) {
+        return;
+    }
+    // Moving along the dock with a preview open switches at once.
+    let delay = if d.preview.borrow().is_some() { 0 } else { s.config.borrow().preview_delay_ms as u64 };
+    let (ws, wd, tw, k) = (Rc::downgrade(s), Rc::downgrade(d), tile.downgrade(), key.to_string());
+    let id = glib::timeout_add_local_once(Duration::from_millis(delay), move || {
+        let (Some(s), Some(d), Some(tile)) = (ws.upgrade(), wd.upgrade(), tw.upgrade()) else { return };
+        d.preview_timer.borrow_mut().take();
+        open_preview(&s, &d, &tile, &k);
+    });
+    *d.preview_timer.borrow_mut() = Some(id);
+}
+
+fn open_preview(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, key: &str) {
+    close_preview(s, d);
+    let desktop = s.desktop.borrow().clone();
+    let (Some(it), Some(monitor)) = (item_for(d, key), desktop.monitor(&d.connector)) else { return };
+    let windows: Vec<&nyx_desktop::Window> = it.windows.iter().filter_map(|a| desktop.window(a)).collect();
+    if windows.is_empty() {
+        return;
+    }
+    let popover = gtk::Popover::new();
+    popover.set_autohide(false);
+    popover.set_position(popover_side(d.eff.position));
+    popover.add_css_class("dock-preview");
+    popover.set_parent(tile);
+    let row = gtk::Box::new(
+        if matches!(d.eff.position, Position::Bottom | Position::Top) {
+            gtk::Orientation::Horizontal
+        } else {
+            gtk::Orientation::Vertical
+        },
+        4,
+    );
+    popover.set_child(Some(&row));
+
+    let icon = launch::info(key)
+        .and_then(|i| i.icon())
+        .unwrap_or_else(|| gio::ThemedIcon::new(&fallback_icon(key.strip_prefix("class:").unwrap_or(""))).upcast());
+    let icon = Some(icon);
+    let mut pictures: HashMap<String, (gtk::Picture, gtk::Image)> = HashMap::new();
+    for w in windows {
+        let (card, picture, placeholder) =
+            preview_card(s, d, w, icon.as_ref(), monitor.active_workspace, is_minimized(&desktop, w.workspace));
+        row.append(&card);
+        if !w.stable_id.is_empty() {
+            pictures.insert(w.stable_id.clone(), (picture, placeholder));
+        }
+    }
+
+    let motion = gtk::EventControllerMotion::new();
+    let wd = Rc::downgrade(d);
+    motion.connect_enter(move |_, _, _| {
+        if let Some(d) = wd.upgrade() {
+            cancel_close_preview(&d);
+        }
+    });
+    let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+    motion.connect_leave(move |_| {
+        if let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) {
+            schedule_close_preview(&s, &d);
+        }
+    });
+    row.add_controller(motion);
+
+    d.holds.set(d.holds.get() + 1);
+    cancel_timer(d);
+    *d.preview.borrow_mut() = Some(Preview { key: key.to_string(), popover: popover.clone() });
+    popover.popup();
+
+    let ids: Vec<String> = pictures.keys().cloned().collect();
+    let scale = tile.scale_factor().max(1) as u32;
+    crate::capture::capture(ids, THUMB_W as u32 * scale, THUMB_H as u32 * scale, move |shot| {
+        if let Some((picture, placeholder)) = pictures.get(&shot.stable_id) {
+            picture.set_paintable(Some(&shot.texture()));
+            placeholder.set_visible(false);
+        }
+    });
+}
+
+fn preview_card(
+    s: &Rc<Shared>,
+    d: &Rc<Dock>,
+    w: &nyx_desktop::Window,
+    icon: Option<&gio::Icon>,
+    current: i64,
+    minimized: bool,
+) -> (gtk::Box, gtk::Picture, gtk::Image) {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    card.add_css_class("preview-card");
+
+    // The overlay takes its size from this box; the picture (captured at twice the
+    // size, for sharp HiDPI) fills it rather than asking for its own pixel size.
+    let thumb = gtk::Overlay::new();
+    thumb.add_css_class("preview-thumb");
+    let frame = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    frame.set_size_request(THUMB_W, THUMB_H);
+    thumb.set_child(Some(&frame));
+    let picture = gtk::Picture::new();
+    picture.set_content_fit(gtk::ContentFit::Contain);
+    picture.set_can_shrink(true);
+    thumb.add_overlay(&picture);
+    let placeholder = gtk::Image::new();
+    placeholder.set_pixel_size(48);
+    if let Some(icon) = icon {
+        placeholder.set_from_gicon(icon);
+    }
+    placeholder.set_halign(gtk::Align::Center);
+    placeholder.set_valign(gtk::Align::Center);
+    thumb.add_overlay(&placeholder);
+
+    let close = gtk::Button::from_icon_name("window-close-symbolic");
+    close.add_css_class("preview-close");
+    close.set_tooltip_text(Some("Close window"));
+    close.set_halign(gtk::Align::End);
+    close.set_valign(gtk::Align::Start);
+    let (address, cw) = (w.address.clone(), card.downgrade());
+    let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+    close.connect_clicked(move |_| {
+        launch::close(&address);
+        let (Some(card), Some(s), Some(d)) = (cw.upgrade(), ws.upgrade(), wd.upgrade()) else { return };
+        let row = card.parent();
+        card.set_visible(false);
+        // Last window closed: nothing left to preview.
+        let any_left = row.as_ref().and_then(|r| r.first_child()).into_iter().any(|first| {
+            let mut c = Some(first);
+            while let Some(w) = c {
+                if w.is_visible() {
+                    return true;
+                }
+                c = w.next_sibling();
+            }
+            false
+        });
+        if !any_left {
+            close_preview(&s, &d);
+        }
+    });
+    thumb.add_overlay(&close);
+    card.append(&thumb);
+
+    let caption = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    caption.add_css_class("preview-caption");
+    let small = gtk::Image::new();
+    small.set_pixel_size(16);
+    if let Some(icon) = icon {
+        small.set_from_gicon(icon);
+    }
+    caption.append(&small);
+    let title = gtk::Label::new(Some(if w.title.is_empty() { &w.class } else { &w.title }));
+    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    title.set_max_width_chars(1);
+    title.set_hexpand(true);
+    title.set_xalign(0.0);
+    caption.append(&title);
+    let place = if minimized {
+        Some(("preview-minimized", "–".to_string(), "Minimized".to_string()))
+    } else if nyx_desktop::is_user_workspace(w.workspace) {
+        Some(("preview-ws", w.workspace.to_string(), format!("Workspace {}", w.workspace)))
+    } else {
+        None
+    };
+    if let Some((class, text, tip)) = place {
+        let label = gtk::Label::new(Some(&text));
+        label.add_css_class("preview-ws");
+        label.add_css_class(class);
+        if w.workspace == current {
+            label.add_css_class("current");
+        }
+        label.set_tooltip_text(Some(&tip));
+        caption.append(&label);
+    }
+    card.append(&caption);
+
+    let click = gtk::GestureClick::new();
+    click.set_button(1);
+    let (ws, wd, address, workspace) = (Rc::downgrade(s), Rc::downgrade(d), w.address.clone(), w.workspace);
+    click.connect_released(move |_, _, _, _| {
+        let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
+        let desktop = s.desktop.borrow().clone();
+        let current = desktop.monitor(&d.connector).map_or(1, |m| m.active_workspace);
+        launch::focus(&address, is_minimized(&desktop, workspace), current);
+        close_preview(&s, &d);
+    });
+    thumb.add_controller(click);
+    (card, picture, placeholder)
+}
+
+fn schedule_close_preview(s: &Rc<Shared>, d: &Rc<Dock>) {
+    if d.preview.borrow().is_none() || d.preview_close.borrow().is_some() {
+        return;
+    }
+    let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+    let id = glib::timeout_add_local_once(Duration::from_millis(300), move || {
+        let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
+        d.preview_close.borrow_mut().take();
+        close_preview(&s, &d);
+    });
+    *d.preview_close.borrow_mut() = Some(id);
+}
+
+fn cancel_close_preview(d: &Dock) {
+    if let Some(t) = d.preview_close.borrow_mut().take() {
+        t.remove();
+    }
+}
+
+fn close_preview(s: &Rc<Shared>, d: &Rc<Dock>) {
+    cancel_close_preview(d);
+    let Some(p) = d.preview.borrow_mut().take() else { return };
+    p.popover.popdown();
+    let pop = p.popover;
+    glib::idle_add_local_once(move || pop.unparent());
+    d.holds.set(d.holds.get().saturating_sub(1));
+    evaluate(s, d);
 }
 
 fn is_minimized(desktop: &Desktop, workspace: i64) -> bool {

@@ -86,3 +86,72 @@ window.dock-right .dock-bar { margin: 22px 10px 22px 16px; padding: 8px 6px 8px 
 window.dock-surface tooltip {
   border-radius: 7px;
 }
+
+/* Window previews: a popover above the app, a card per window. */
+popover.dock-preview > contents {
+  background: @theme_popover;
+  border: 1px solid @theme_border;
+  border-radius: 15px;
+  padding: 8px;
+  box-shadow: 0 16px 40px alpha(black, 0.5);
+}
+
+popover.dock-preview > arrow {
+  background: @theme_popover;
+  border: 1px solid @theme_border;
+}
+
+.preview-card {
+  padding: 6px;
+  border-radius: 11px;
+  transition: background 120ms ease-out;
+}
+
+.preview-card:hover {
+  background: alpha(@theme_text, 0.06);
+}
+
+.preview-thumb {
+  border-radius: 7px;
+  background: alpha(@theme_text, 0.04);
+}
+
+.preview-thumb picture {
+  border-radius: 7px;
+}
+
+.preview-close {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  margin: 6px;
+  border-radius: 999px;
+  background: @theme_raised;
+  color: @theme_text;
+  box-shadow: 0 2px 6px alpha(black, 0.35);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.preview-card:hover .preview-close {
+  opacity: 1;
+}
+
+.preview-caption {
+  padding: 7px 2px 1px;
+  font-size: 12.5px;
+}
+
+.preview-ws {
+  font-size: 11px;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  color: @theme_text_tertiary;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: alpha(@theme_text, 0.035);
+}
+
+.preview-ws.current {
+  color: @theme_dim_text;
+}

@@ -60,6 +60,7 @@ mod tests {
     fn win(workspace: i64, at: [i32; 2], size: [i32; 2]) -> Window {
         Window {
             address: format!("{at:?}"),
+            stable_id: String::new(),
             class: "x".into(),
             initial_class: "x".into(),
             title: String::new(),

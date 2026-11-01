@@ -3,6 +3,7 @@
 //! ```toml
 //! icon_size = 48
 //! hide = "smart"          # smart | always | never
+//! previews = true         # windows of a running app on hover
 //! running = "all"         # all | monitor: running apps from every monitor or this one
 //! pinned = ["io.github.design_nexus.nyx.Files", "firefox"]
 //!
@@ -63,6 +64,8 @@ pub struct Config {
     pub position: Position,
     /// Milliseconds before the dock hides once nothing keeps it up.
     pub hide_delay_ms: u32,
+    /// Show a running app's windows when the pointer rests on it.
+    pub previews: bool,
     /// Milliseconds the pointer rests on an app before its windows preview.
     pub preview_delay_ms: u32,
     pub pinned: Vec<String>,
@@ -78,6 +81,7 @@ impl Default for Config {
             running: Running::All,
             position: Position::Bottom,
             hide_delay_ms: 600,
+            previews: true,
             preview_delay_ms: 350,
             pinned: Vec::new(),
             monitors: BTreeMap::new(),

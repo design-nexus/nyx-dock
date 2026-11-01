@@ -101,6 +101,7 @@ mod tests {
     fn window(address: &str, class: &str, workspace: i64, monitor: i64, focus: i32) -> Window {
         Window {
             address: address.into(),
+            stable_id: String::new(),
             class: class.into(),
             initial_class: class.into(),
             title: String::new(),
