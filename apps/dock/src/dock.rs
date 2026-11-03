@@ -749,6 +749,7 @@ fn refresh(s: &Rc<Shared>) {
         let Some(monitor) = desktop.monitor(&d.connector) else { continue };
         // Not under an app being moved; end_drag catches up.
         if d.drag.borrow().is_some() {
+            evaluate(s, &d);
             continue;
         }
         let order = s.orders.borrow().get(&d.connector).cloned().unwrap_or_default();
@@ -1839,6 +1840,10 @@ fn evaluate(s: &Rc<Shared>, d: &Rc<Dock>) {
     let Some(monitor): Option<&Monitor> = desktop.monitor(&d.connector) else { return };
     let mode = hide_here(d, &desktop, monitor);
     let windows_want = should_hide(mode, &desktop, monitor, dock_rect(d));
+    if windows_want && d.hover.get() && d.holds.get() == 0 && !pointer_on(d, monitor) {
+        debug(|| format!("{}: the pointer left without the dock hearing", d.connector));
+        d.hover.set(false);
+    }
     debug(|| {
         format!(
             "{}: rect {:?}, {mode:?}, windows want it hidden: {windows_want}, hidden {}",
@@ -1858,6 +1863,17 @@ fn evaluate(s: &Rc<Shared>, d: &Rc<Dock>) {
         }
     }
     reserve(d, mode == Hide::Never);
+}
+
+/// Whether the pointer is over the dock, asked of Hyprland. A pointer that leaves from
+/// a popover (the Apps panel, a menu) never tells the dock it left.
+fn pointer_on(d: &Dock, monitor: &Monitor) -> bool {
+    let Ok(hypr) = nyx_desktop::hypr::Instance::find() else { return true };
+    let Ok(pos) = hypr.json::<serde_json::Value>("cursorpos") else { return true };
+    let (Some(x), Some(y)) = (pos["x"].as_f64(), pos["y"].as_f64()) else { return true };
+    let (x, y) = (x as i32 - monitor.x, y as i32 - monitor.y);
+    let r = dock_rect(d);
+    x >= r.x - 4 && x < r.x + r.w + 4 && y >= r.y - 4 && y < r.y + r.h + 4
 }
 
 /// A dock that stays up keeps its space, as on macOS: maximized and new windows stay
