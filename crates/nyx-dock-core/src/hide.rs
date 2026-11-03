@@ -75,6 +75,7 @@ mod tests {
             pinned: false,
             hidden: false,
             urgent: false,
+            grouped: Vec::new(),
         }
     }
 

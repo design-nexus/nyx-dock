@@ -8,6 +8,6 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-nyx-desktop = { git = "https://github.com/design-nexus/nyx-core.git", rev = "2dae114649367bfe5ad9239562429457087b1076", default-features = false }
+nyx-desktop = { git = "https://github.com/design-nexus/nyx-core.git", rev = "394ddf8193797cd1f420fac98b097d04fa75f0e2", default-features = false }
 serde = { version = "1", features = ["derive"] }
 toml = "1"

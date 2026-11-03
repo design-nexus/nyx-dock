@@ -413,3 +413,53 @@ popover.dock-fan > contents {
   box-shadow: inset 0 0 0 1px alpha(@theme_text, 0.1);
   color: mix(@theme_text, @theme_bg, 0.32);
 }
+
+/* Hover buttons on the focused floating window (controls.rs): three dots that open
+ * into minimize, maximize and close. */
+window.window-pill-surface {
+  background: transparent;
+}
+
+.window-pill {
+  background: alpha(@theme_card, 0.72);
+  border: 1px solid alpha(@theme_border, 0.6);
+  border-radius: 11px;
+  padding: 4px 6px;
+  opacity: 0.7;
+  transition: opacity 120ms ease-out;
+}
+
+.window-pill.open {
+  background: @theme_card;
+  border-color: @theme_border;
+  padding: 3px 4px;
+  opacity: 1;
+  box-shadow: 0 4px 14px alpha(black, 0.35);
+}
+
+.window-pill-button {
+  min-width: 8px;
+  min-height: 8px;
+  padding: 0;
+  border-radius: 99px;
+  background: @theme_dim_text;
+  border: none;
+  box-shadow: none;
+}
+
+.window-pill.open .window-pill-button {
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: 7px;
+  background: transparent;
+  color: @theme_text;
+}
+
+.window-pill.open .window-pill-button:hover {
+  background: alpha(@theme_text, 0.08);
+}
+
+.window-pill.open .window-pill-button:last-child:hover {
+  background: @theme_danger;
+  color: @theme_on_accent;
+}

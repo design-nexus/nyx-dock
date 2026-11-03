@@ -87,6 +87,7 @@ pub fn start(app: &gtk::Application, only: Option<String>) {
         let Some(s) = ws.upgrade() else { return };
         debug(|| format!("update {:?} connected {}", u.changes, u.desktop.connected));
         *s.desktop.borrow_mut() = u.desktop.clone();
+        update_controls(&s);
         if u.changes.monitors || s.docks.borrow().is_empty() {
             rebuild_docks(&s);
         } else if u.changes.windows || u.changes.focus || u.changes.workspaces || u.changes.active {
@@ -116,6 +117,7 @@ pub fn start(app: &gtk::Application, only: Option<String>) {
                 return;
             }
             *s.config.borrow_mut() = load_config();
+            update_controls(&s);
             rebuild_docks(&s);
         });
         std::mem::forget(fm);
@@ -142,6 +144,11 @@ pub fn start(app: &gtk::Application, only: Option<String>) {
     }) {
         std::mem::forget(sub);
     }
+}
+
+fn update_controls(s: &Shared) {
+    let enabled = s.config.borrow().window_controls;
+    crate::controls::update(&s.app, enabled, s.only.as_deref(), &s.desktop.borrow());
 }
 
 // ---------- Settings and apps ----------

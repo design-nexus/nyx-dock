@@ -6,6 +6,7 @@
 //! only (for trying it on a test output).
 
 mod badges;
+mod controls;
 mod dock;
 mod handover;
 mod launch;

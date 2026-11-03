@@ -6,6 +6,7 @@
 //! previews = true         # windows of a running app on hover
 //! running = "all"         # all | monitor: running apps from every monitor or this one
 //! pinned = ["io.github.design_nexus.nyx.Files", "firefox"]
+//! window_controls = false # hover buttons on floating windows
 //!
 //! [monitors."Samsung Display Corp.|ATNA60DL01-0|"]   # a monitor's stable id, or its connector
 //! icon_size = 40
@@ -138,6 +139,9 @@ pub struct Config {
     pub folders: Vec<Folder>,
     /// The Trash at the end.
     pub trash: bool,
+    /// Hover buttons (minimize, maximize, close) on the focused floating window, for
+    /// when Omarchy's floating titlebar is off. Settings sets it.
+    pub window_controls: bool,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub monitors: BTreeMap<String, MonitorConfig>,
 }
@@ -155,6 +159,7 @@ impl Default for Config {
             pinned: Vec::new(),
             folders: vec![Folder::default()],
             trash: true,
+            window_controls: false,
             monitors: BTreeMap::new(),
         }
     }
