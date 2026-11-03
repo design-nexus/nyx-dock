@@ -37,7 +37,9 @@ pub enum Hide {
     /// Hide while a window overlaps the dock; show at the screen edge.
     #[default]
     Smart,
-    /// Always hidden until the pointer reaches the edge.
+    /// Always hidden until the pointer reaches the edge. Settings once wrote this as
+    /// `auto`, which is read the same way.
+    #[serde(alias = "auto")]
     Always,
     /// Always shown.
     Never,
@@ -308,6 +310,7 @@ running = "monitor"
         let huge: Config = toml::from_str("icon_size = 500").unwrap();
         assert_eq!(huge.for_monitor("x", "y", false).icon_size, 96);
         assert!(toml::from_str::<Config>("hide = \"sometimes\"").is_err());
+        assert_eq!(toml::from_str::<Config>("hide = \"auto\"").unwrap().hide, Hide::Always);
     }
 
     #[test]
