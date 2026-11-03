@@ -34,7 +34,8 @@ nyx-dock --disable   # stop it and turn Omarchy's dock back on
 - Badges and progress from apps that use the Unity launcher API, and a warning-colored
   dot for a window asking for attention.
 - Right-click for the app's own actions (New Private Window, Compose, …), Keep in dock /
-  Remove from dock, and Quit or Close all windows. A player (Nyx Music, a browser
+  Remove from dock, Show windows (with Nyx Switcher: the app's windows in its overview),
+  and Quit or Close all windows. A player (Nyx Music, a browser
   playing video, …) also shows what's playing with its controls.
 - Drag an app along the dock to pin it in that place; drop a pinned app or a folder
   outside the dock to remove it. Drop files on an app to open them with it, on a folder

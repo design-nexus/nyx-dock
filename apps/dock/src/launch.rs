@@ -122,6 +122,16 @@ pub fn open_default(uri: &str) {
     }
 }
 
+/// Whether Nyx Switcher is installed (its overview shows one app's windows).
+pub fn switcher_installed() -> bool {
+    has("nyx-switcher-send")
+}
+
+/// Show one app's windows in Nyx Switcher's overview.
+pub fn show_windows(key: &str) {
+    spawn(&["nyx-switcher-send".into(), "overview".into(), key.into()]);
+}
+
 /// Empty the Trash.
 pub fn empty_trash() {
     spawn(&["gio".into(), "trash".into(), "--empty".into()]);

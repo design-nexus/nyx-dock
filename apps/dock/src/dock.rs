@@ -1071,6 +1071,9 @@ fn menu(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, item: &Item) {
     if is_app {
         second.append(Some(if item.pinned { "Remove from dock" } else { "Keep in dock" }), Some("dock.pin"));
     }
+    if item.running() && launch::switcher_installed() {
+        second.append(Some("Show windows"), Some("dock.windows"));
+    }
     if item.running() {
         second.append(Some(if item.windows.len() > 1 { "Close all windows" } else { "Quit" }), Some("dock.quit"));
     }
@@ -1099,6 +1102,11 @@ fn menu(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, item: &Item) {
         pin(&s, &d, &k, !pinned, None);
     });
     actions.add_action(&pin_action);
+
+    let show = gio::SimpleAction::new("windows", None);
+    let k = key.clone();
+    show.connect_activate(move |_, _| launch::show_windows(&k));
+    actions.add_action(&show);
 
     let quit = gio::SimpleAction::new("quit", None);
     let windows = item.windows.clone();
