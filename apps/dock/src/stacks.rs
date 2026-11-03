@@ -304,7 +304,7 @@ pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
                     face.add_overlay(&card);
                 }
             } else {
-                face.set_child(Some(&folder_face(folder.icon.as_deref(), size)));
+                face.set_child(Some(&folder_face(folder.icon.as_deref(), &dir, size)));
             }
             if !items.is_empty() {
                 let count = gtk::Label::new(Some(&if items.len() > 99 { "99+".into() } else { items.len().to_string() }));
@@ -430,7 +430,15 @@ pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
 
 /// A folder as a 2.0 tile: the satin square the Trash uses, with the folder glyph (or
 /// the folder's own icon name, if the settings give one).
-fn folder_face(icon: Option<&str>, size: i32) -> gtk::Widget {
+fn folder_face(icon: Option<&str>, dir: &Path, size: i32) -> gtk::Widget {
+    if icon.is_none()
+        && let Some(themed) = umbra_folder_icon(dir)
+    {
+        let image = gtk::Image::from_gicon(&themed);
+        image.set_pixel_size(size);
+        image.set_halign(gtk::Align::Center);
+        return image.upcast();
+    }
     let satin = gtk::Box::new(gtk::Orientation::Vertical, 0);
     satin.add_css_class("dock-satin");
     satin.set_size_request(size, size);
@@ -449,6 +457,23 @@ fn folder_face(icon: Option<&str>, size: i32) -> gtk::Widget {
     glyph.set_valign(gtk::Align::Center);
     satin.append(&glyph);
     satin.upcast()
+}
+
+/// With the Umbra icon theme in use, its icon for this folder: the folder's own icon
+/// (Games, Dropbox… as `umbra-icons folders` sets them), else its XDG one (Downloads).
+/// Other icon themes keep the dock's satin tile.
+fn umbra_folder_icon(dir: &Path) -> Option<gio::Icon> {
+    let theme = gtk::IconTheme::for_display(&gdk::Display::default()?);
+    if !theme.theme_name().starts_with("Umbra") {
+        return None;
+    }
+    let info = gio::File::for_path(dir)
+        .query_info("standard::icon,metadata::custom-icon-name", gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE)
+        .ok()?;
+    if let Some(name) = info.attribute_string("metadata::custom-icon-name").filter(|n| theme.has_icon(n)) {
+        return Some(gio::ThemedIcon::new(&name).upcast());
+    }
+    info.icon()
 }
 
 /// The 2.0 folder glyph (24 px grid, 1.6 px round strokes), drawn in the tile's colour.

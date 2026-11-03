@@ -48,7 +48,7 @@ nyx-dock --disable   # stop it and turn Omarchy's dock back on
   to add a folder and, with Nyx Settings, to open its Dock page.
 - Add a folder from the dock's menu, or drag one from your file manager onto the dock
   (on the line before the folders, or between them).
-- Folders show their newest files stacked (or the folder icon) with a count, and open as
+- Folders show their newest files stacked (or the folder icon: with the Umbra icon theme, the folder's own, such as Downloads, Games or Dropbox) with a count, and open as
   a fan, a grid, a list or in your file manager, sorted by date, name or kind: right-click
   a folder to choose. Grids and lists show every file and scroll. Click a file to open it, or drag it out to
   another app. Removing a folder from the dock never touches the folder.
