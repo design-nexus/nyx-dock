@@ -52,19 +52,38 @@ pub struct Rect {
     pub h: i32,
 }
 
-/// Whether the dock should be out of the way on `monitor`, given where it sits.
-/// Something that keeps it up (the pointer on it, a menu open, a drag) is the caller's
-/// business: this only says what the windows want.
-pub fn should_hide(mode: Hide, desktop: &Desktop, monitor: &Monitor, dock: Rect) -> bool {
+/// Whether the dock should be out of the way on `monitor`, given where it sits on
+/// `edge`. Something that keeps it up (the pointer on it, a menu open, a drag) is the
+/// caller's business: this only says what the windows want.
+///
+/// Tiled windows fill the screen, so they count as reaching the dock's edge: when the
+/// space a dock kept is given back, Hyprland lays them out again without an event, and
+/// their last known size still stops short of the dock.
+pub fn should_hide(mode: Hide, desktop: &Desktop, monitor: &Monitor, dock: Rect, edge: Position) -> bool {
     match mode {
         Hide::Never => false,
         Hide::Always => true,
         Hide::Smart => {
             let fullscreen = desktop.workspaces.iter().any(|w| w.id == monitor.active_workspace && w.has_fullscreen);
+            let (dx, dy) = (monitor.x + dock.x, monitor.y + dock.y);
             fullscreen
-                || desktop
-                    .visible_windows(monitor)
-                    .any(|w| w.fullscreen != 0 || w.overlaps(monitor.x + dock.x, monitor.y + dock.y, dock.w, dock.h))
+                || desktop.visible_windows(monitor).any(|w| {
+                    if w.fullscreen != 0 {
+                        return true;
+                    }
+                    if w.floating {
+                        return w.overlaps(dx, dy, dock.w, dock.h);
+                    }
+                    let ([x, y], [ww, wh]) = (w.at, w.size);
+                    let (mut x0, mut y0, mut x1, mut y1) = (x, y, x + ww, y + wh);
+                    match edge {
+                        Position::Bottom => y1 = y1.max(dy + dock.h),
+                        Position::Top => y0 = y0.min(dy),
+                        Position::Left => x0 = x0.min(dx),
+                        Position::Right => x1 = x1.max(dx + dock.w),
+                    }
+                    x0 < dx + dock.w && dx < x1 && y0 < dy + dock.h && dy < y1
+                })
         }
     }
 }
@@ -129,20 +148,20 @@ mod tests {
     #[test]
     fn tiled_window_to_the_bottom_hides_it() {
         let d = desktop(vec![win(1, [10, 36], [1900, 1034])]);
-        assert!(should_hide(Hide::Smart, &d, &d.monitors[0], DOCK));
+        assert!(should_hide(Hide::Smart, &d, &d.monitors[0], DOCK, Position::Bottom));
     }
 
     #[test]
     fn small_floating_window_doesnt() {
         let d = desktop(vec![win(1, [400, 200], [800, 600])]);
-        assert!(!should_hide(Hide::Smart, &d, &d.monitors[0], DOCK));
-        assert!(should_hide(Hide::Always, &d, &d.monitors[0], DOCK));
+        assert!(!should_hide(Hide::Smart, &d, &d.monitors[0], DOCK, Position::Bottom));
+        assert!(should_hide(Hide::Always, &d, &d.monitors[0], DOCK, Position::Bottom));
     }
 
     #[test]
     fn only_the_workspace_on_screen_counts() {
         let d = desktop(vec![win(2, [10, 36], [1900, 1034])]);
-        assert!(!should_hide(Hide::Smart, &d, &d.monitors[0], DOCK));
+        assert!(!should_hide(Hide::Smart, &d, &d.monitors[0], DOCK, Position::Bottom));
     }
 
     #[test]
@@ -150,9 +169,26 @@ mod tests {
         // The same window on a monitor placed at x = 1920 overlaps that monitor's dock.
         let mut d = desktop(vec![win(1, [1930, 36], [1900, 1034])]);
         d.monitors[0] = monitor(1920);
-        assert!(should_hide(Hide::Smart, &d, &d.monitors[0], DOCK));
+        assert!(should_hide(Hide::Smart, &d, &d.monitors[0], DOCK, Position::Bottom));
         d.monitors[0] = monitor(0);
-        assert!(!should_hide(Hide::Smart, &d, &d.monitors[0], DOCK), "far right of a 0-based monitor");
+        assert!(!should_hide(Hide::Smart, &d, &d.monitors[0], DOCK, Position::Bottom), "far right of a 0-based monitor");
+    }
+
+    #[test]
+    fn tiled_windows_reach_the_dock() {
+        // Laid out while a dock kept its space: it stops above the dock (at 1000).
+        let mut tile = win(1, [10, 36], [1900, 950]);
+        tile.floating = false;
+        let d = desktop(vec![tile]);
+        assert!(should_hide(Hide::Smart, &d, &d.monitors[0], DOCK, Position::Bottom));
+        // A floating window that size really is clear of it.
+        let d = desktop(vec![win(1, [10, 36], [1900, 950])]);
+        assert!(!should_hide(Hide::Smart, &d, &d.monitors[0], DOCK, Position::Bottom));
+        // A tile beside the dock, not over it, still doesn't count.
+        let mut side = win(1, [10, 36], [600, 950]);
+        side.floating = false;
+        let d = desktop(vec![side]);
+        assert!(!should_hide(Hide::Smart, &d, &d.monitors[0], DOCK, Position::Bottom));
     }
 
     #[test]
@@ -185,7 +221,7 @@ mod tests {
             has_fullscreen: true,
             tiled_layout: String::new(),
         });
-        assert!(should_hide(Hide::Smart, &d, &d.monitors[0], DOCK));
-        assert!(!should_hide(Hide::Never, &d, &d.monitors[0], DOCK));
+        assert!(should_hide(Hide::Smart, &d, &d.monitors[0], DOCK, Position::Bottom));
+        assert!(!should_hide(Hide::Never, &d, &d.monitors[0], DOCK, Position::Bottom));
     }
 }

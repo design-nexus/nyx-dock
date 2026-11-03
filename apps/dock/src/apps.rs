@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 type SetPinned = Box<dyn Fn(&str, bool)>;
-type Moving = Box<dyn Fn(Option<&str>)>;
+type Moving = Box<dyn Fn(Option<(&str, &gtk::DragSource)>)>;
 
 /// What the Apps button needs from its dock.
 pub struct Host {
@@ -255,7 +255,7 @@ fn cell(app: &App, host: &Rc<Host>, close: impl Fn() + Clone + 'static) -> gtk::
         if let Some(pop) = cw.upgrade().and_then(|c| c.ancestor(gtk::Popover::static_type())) {
             pop.add_css_class("moving");
         }
-        (h.drag)(Some(&id));
+        (h.drag)(Some((&id, src)));
     });
     let h = host.clone();
     drag.connect_drag_end(move |_, _, _| {

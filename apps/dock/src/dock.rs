@@ -94,6 +94,8 @@ impl Dock {
 /// where it would land, and the other icons make room.
 struct Drag {
     key: String,
+    /// Where it started, to tell whether it's still going.
+    source: glib::WeakRef<gtk::DragSource>,
     tile: Option<gtk::Widget>,
     /// The tile's neighbour before the drag, to put it back.
     home: Option<gtk::Widget>,
@@ -368,7 +370,8 @@ fn new_dock(s: &Rc<Shared>, connector: &str, gmon: &gdk::Monitor, eff: Effective
     strip.set_layer(Layer::Top);
     strip.set_monitor(Some(gmon));
     strip.set_keyboard_mode(KeyboardMode::None);
-    strip.set_exclusive_zone(0);
+    // At the very edge, not above the space a dock that stays up keeps.
+    strip.set_exclusive_zone(-1);
     strip.set_anchor(edge, true);
     let strip_child = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     strip.set_child(Some(&strip_child));
@@ -575,14 +578,14 @@ fn choose_folder(s: &Rc<Shared>) {
 // ---------- Moving apps along the dock ----------
 
 /// An app starts moving: from its tile, or from the Apps panel (no tile yet).
-fn begin_drag(s: &Rc<Shared>, d: &Rc<Dock>, key: &str) {
+fn begin_drag(s: &Rc<Shared>, d: &Rc<Dock>, key: &str, source: &gtk::DragSource) {
     hold(s, d, true);
     let tile = d.tiles.borrow().iter().find(|t| t.key == key).map(|t| t.root.clone().upcast::<gtk::Widget>());
     let home = tile.as_ref().and_then(|t| t.prev_sibling());
     if let Some(t) = &tile {
         t.add_css_class("dragging");
     }
-    *d.drag.borrow_mut() = Some(Drag { key: key.to_string(), tile, home, gap: None, dropped: false });
+    *d.drag.borrow_mut() = Some(Drag { key: key.to_string(), source: source.downgrade(), tile, home, gap: None, dropped: false });
 }
 
 /// The pinned tiles in the bar's order, except the one moving.
@@ -686,8 +689,8 @@ fn drop_pin(s: &Rc<Shared>, d: &Rc<Dock>, key: &str) -> bool {
     true
 }
 
-/// The drag is over, dropped or not.
-fn end_drag(s: &Rc<Shared>, d: &Rc<Dock>) {
+/// Put the dock back as it was before an app started moving (unless it was dropped).
+fn clear_drag(d: &Dock) {
     let drag = d.drag.borrow_mut().take();
     if let Some(drag) = drag {
         if let Some(tile) = &drag.tile {
@@ -700,6 +703,15 @@ fn end_drag(s: &Rc<Shared>, d: &Rc<Dock>) {
             d.bar.remove(&gap);
         }
     }
+}
+
+/// The drag is over, dropped or not.
+fn end_drag(s: &Rc<Shared>, d: &Rc<Dock>) {
+    // Already let go of as stale: its hold went with it.
+    if d.drag.borrow().is_none() {
+        return;
+    }
+    clear_drag(d);
     hold(s, d, false);
     // Changes put off while it moved.
     let s2 = s.clone();
@@ -1056,7 +1068,7 @@ fn new_tile(s: &Rc<Shared>, d: &Rc<Dock>, item: &Item) -> Option<Tile> {
                 src.set_icon(Some(&paintable), image.width() / 2, image.height() / 2);
             }
             if let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) {
-                begin_drag(&s, &d, &k);
+                begin_drag(&s, &d, &k, src);
             }
         });
         let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
@@ -1574,10 +1586,10 @@ fn apps_host(s: &Rc<Shared>, d: &Rc<Dock>) -> Rc<crate::apps::Host> {
         }
     });
     let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
-    let drag = Box::new(move |id: Option<&str>| {
+    let drag = Box::new(move |moving: Option<(&str, &gtk::DragSource)>| {
         let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
-        match id {
-            Some(id) => begin_drag(&s, &d, id),
+        match moving {
+            Some((id, source)) => begin_drag(&s, &d, id, source),
             None => end_drag(&s, &d),
         }
     });
@@ -1839,10 +1851,32 @@ fn evaluate(s: &Rc<Shared>, d: &Rc<Dock>) {
     let desktop = s.desktop.borrow().clone();
     let Some(monitor): Option<&Monitor> = desktop.monitor(&d.connector) else { return };
     let mode = hide_here(d, &desktop, monitor);
-    let windows_want = should_hide(mode, &desktop, monitor, dock_rect(d));
-    if windows_want && d.hover.get() && d.holds.get() == 0 && !pointer_on(d, monitor) {
-        debug(|| format!("{}: the pointer left without the dock hearing", d.connector));
-        d.hover.set(false);
+    // Give the space back before looking: tiles laid out around it don't reach the dock.
+    if mode != Hide::Never {
+        reserve(d, false);
+    }
+    let windows_want = should_hide(mode, &desktop, monitor, dock_rect(d), d.position);
+    if windows_want && (d.hover.get() || d.holds.get() > 0) {
+        let busy = d.holds.get() > 0 && (popover_open(d.bar.upcast_ref()) || drag_live(d));
+        if !busy && !pointer_on(d, monitor) {
+            if d.hover.get() {
+                debug(|| format!("{}: the pointer left without the dock hearing", d.connector));
+                d.hover.set(false);
+            }
+            if d.holds.get() > 0 {
+                let what = format!("drag {}, file drag {}", d.drag.borrow().is_some(), d.file_drag.get());
+                eprintln!("nyx-dock: {}: let go of {} stale hold(s) ({what})", d.connector, d.holds.get());
+                clear_drag(d);
+                d.file_drag.set(false);
+                d.bar.remove_css_class("folder-drop");
+                let mut child = d.bar.first_child();
+                while let Some(c) = child {
+                    c.remove_css_class("drop-hover");
+                    child = c.next_sibling();
+                }
+                d.holds.set(0);
+            }
+        }
     }
     debug(|| {
         format!(
@@ -1863,6 +1897,23 @@ fn evaluate(s: &Rc<Shared>, d: &Rc<Dock>) {
         }
     }
     reserve(d, mode == Hide::Never);
+}
+
+/// A popover open on the dock: a menu, a preview, a folder or the Apps panel.
+fn popover_open(w: &gtk::Widget) -> bool {
+    let mut child = w.first_child();
+    while let Some(c) = child {
+        if (c.is::<gtk::Popover>() && c.is_mapped()) || popover_open(&c) {
+            return true;
+        }
+        child = c.next_sibling();
+    }
+    false
+}
+
+/// An app is really being dragged (its drag hasn't ended unheard).
+fn drag_live(d: &Dock) -> bool {
+    d.drag.borrow().as_ref().is_some_and(|g| g.source.upgrade().is_some_and(|s| s.drag().is_some()))
 }
 
 /// Whether the pointer is over the dock, asked of Hyprland. A pointer that leaves from
@@ -1963,7 +2014,7 @@ fn schedule_hide(s: &Rc<Shared>, d: &Rc<Dock>, ms: u64) {
         let desktop = s.desktop.borrow().clone();
         let Some(monitor) = desktop.monitor(&d.connector) else { return };
         let mode = hide_here(&d, &desktop, monitor);
-        if should_hide(mode, &desktop, monitor, dock_rect(&d)) && !d.hover.get() && d.holds.get() == 0 {
+        if should_hide(mode, &desktop, monitor, dock_rect(&d), d.position) && !d.hover.get() && d.holds.get() == 0 {
             d.hidden.set(true);
             d.window.set_visible(false);
             reserve(&d, false);
