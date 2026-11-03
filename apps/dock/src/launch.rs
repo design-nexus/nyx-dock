@@ -122,6 +122,19 @@ pub fn open_default(uri: &str) {
     }
 }
 
+/// The app a launcher entry stands for: Omarchy's "Browser" entry
+/// (`omarchy-launch-browser`, no icon of its own) is the default browser it opens.
+/// Other entries stand for themselves.
+pub fn stands_for(id: &str) -> Option<String> {
+    let exec = info(id)?.string("Exec")?.to_string();
+    if exec.split_whitespace().next()?.rsplit('/').next()? != "omarchy-launch-browser" {
+        return None;
+    }
+    let out = Command::new("omarchy-cmd-default-browser").stderr(Stdio::null()).output().ok()?;
+    let browser = String::from_utf8_lossy(&out.stdout).trim().trim_end_matches(".desktop").to_string();
+    (!browser.is_empty() && browser != id && info(&browser).is_some()).then_some(browser)
+}
+
 /// Whether Nyx Switcher is installed (its overview shows one app's windows).
 pub fn switcher_installed() -> bool {
     has("nyx-switcher-send")

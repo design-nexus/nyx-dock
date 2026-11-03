@@ -31,6 +31,9 @@ struct Shared {
     config: RefCell<Config>,
     desktop: RefCell<Arc<Desktop>>,
     index: RefCell<Index>,
+    /// Pins that stand for another app (Omarchy's Browser entry → the default browser):
+    /// pinned id → the app shown.
+    aliases: RefCell<HashMap<String, String>>,
     badges: RefCell<HashMap<String, Badge>>,
     docks: RefCell<Vec<Rc<Dock>>>,
     /// Running apps' order per output, so they keep their places.
@@ -70,6 +73,7 @@ pub fn start(app: &gtk::Application, only: Option<String>) {
         config: RefCell::new(config),
         desktop: RefCell::new(Arc::new(Desktop::default())),
         index: RefCell::new(build_index()),
+        aliases: RefCell::default(),
         badges: RefCell::default(),
         docks: RefCell::default(),
         orders: RefCell::default(),
@@ -96,6 +100,7 @@ pub fn start(app: &gtk::Application, only: Option<String>) {
     monitor.connect_changed(move |_| {
         if let Some(s) = ws.upgrade() {
             *s.index.borrow_mut() = build_index();
+            s.aliases.borrow_mut().clear();
             refresh_all(&s);
         }
     });
@@ -291,6 +296,10 @@ fn new_dock(s: &Rc<Shared>, connector: &str, gmon: &gdk::Monitor, eff: Effective
     strip.set_anchor(edge, true);
     let strip_child = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     strip.set_child(Some(&strip_child));
+    // Sized before it's shown: an empty window gets GTK's 200 × 200 fallback, which
+    // later size requests don't shrink. Until the dock has a size, half the edge.
+    let half = if horizontal { gmon.geometry().width() / 2 } else { gmon.geometry().height() / 2 };
+    size_edge(&strip, horizontal, half.max(48));
 
     let dock = Rc::new(Dock {
         connector: connector.to_string(),
@@ -379,15 +388,23 @@ fn fit_input(d: &Dock) {
     let (Some(surface), Some(b)) = (d.window.surface(), d.bar.compute_bounds(&d.window)) else { return };
     let r = gtk::cairo::RectangleInt::new(b.x() as i32, b.y() as i32, b.width().ceil() as i32, b.height().ceil() as i32);
     surface.set_input_region(Some(&gtk::cairo::Region::create_rectangle(&r)));
-    // The edge strip is as wide (or tall) as the dock.
+    // The edge strip is as wide (or tall) as the dock, once the dock has been laid out
+    // (a dock hidden before its first frame reports a few pixels).
     let horizontal = matches!(d.eff.position, Position::Bottom | Position::Top);
-    if let Some(child) = d.edge.child() {
-        if horizontal {
-            child.set_size_request(r.width().max(48), 2);
-        } else {
-            child.set_size_request(2, r.height().max(48));
-        }
+    let along = if horizontal { r.width() } else { r.height() };
+    if along >= 96 {
+        size_edge(&d.edge, horizontal, along);
     }
+}
+
+/// The reveal strip: `along` pixels along the edge, 2 deep.
+fn size_edge(strip: &gtk::Window, horizontal: bool, along: i32) {
+    let (w, h) = if horizontal { (along, 2) } else { (2, along) };
+    if let Some(child) = strip.child() {
+        child.set_size_request(w, h);
+    }
+    strip.set_default_size(w, h);
+    strip.set_size_request(w, h);
 }
 
 fn refresh_all(s: &Rc<Shared>) {
@@ -403,7 +420,8 @@ fn refresh(s: &Rc<Shared>) {
     for d in docks {
         let Some(monitor) = desktop.monitor(&d.connector) else { continue };
         let order = s.orders.borrow().get(&d.connector).cloned().unwrap_or_default();
-        let (items, order) = items::compose(&d.eff.pinned, &desktop, &s.index.borrow(), d.eff.running, monitor, &order);
+        let pinned = shown_pins(s, &d.eff.pinned);
+        let (items, order) = items::compose(&pinned, &desktop, &s.index.borrow(), d.eff.running, monitor, &order);
         s.orders.borrow_mut().insert(d.connector.clone(), order);
         debug(|| format!("{}: {} items", d.connector, items.len()));
         if *d.items.borrow() != items {
@@ -462,7 +480,25 @@ fn host(s: &Rc<Shared>, d: &Rc<Dock>, folder: Option<usize>) -> Rc<crate::stacks
 /// An app being dragged within the dock.
 struct DockDrag(String);
 
+/// The pins as shown: each alias pin as the app it stands for (once).
+fn shown_pins(s: &Shared, pins: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(pins.len());
+    for p in pins {
+        let shown = {
+            let mut aliases = s.aliases.borrow_mut();
+            aliases.entry(p.clone()).or_insert_with(|| launch::stands_for(p).unwrap_or_else(|| p.clone())).clone()
+        };
+        if !out.contains(&shown) {
+            out.push(shown);
+        }
+    }
+    out
+}
+
 fn pin(s: &Rc<Shared>, d: &Rc<Dock>, key: &str, pinned: bool, at: Option<usize>) {
+    // A shown app that stands in for a pin (the browser) changes that pin.
+    let source = s.aliases.borrow().iter().find(|(from, to)| *to == key && *from != key && d.eff.pinned.contains(from)).map(|(f, _)| f.clone());
+    let key = source.as_deref().unwrap_or(key);
     let desktop = s.desktop.borrow().clone();
     let Some(m) = desktop.monitor(&d.connector) else { return };
     s.config.borrow_mut().set_pinned(&m.stable_id(), &m.name, key, pinned, at);

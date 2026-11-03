@@ -637,9 +637,18 @@ pub fn trash_tile(host: Rc<Host>) -> gtk::Widget {
     let tile = gtk::Box::new(gtk::Orientation::Vertical, 2);
     tile.add_css_class("dock-item");
     tile.add_css_class("dock-trash");
+    // A satin tile with a glyph, like the apps' icons (STYLE.md 2.0), rather than the
+    // icon theme's full-colour bin.
+    let satin = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    satin.add_css_class("dock-satin");
+    satin.set_size_request(host.icon_size, host.icon_size);
+    satin.set_halign(gtk::Align::Center);
     let image = gtk::Image::new();
-    image.set_pixel_size(host.icon_size);
-    tile.append(&image);
+    image.set_pixel_size((host.icon_size / 2).max(16));
+    image.set_vexpand(true);
+    image.set_valign(gtk::Align::Center);
+    satin.append(&image);
+    tile.append(&satin);
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.add_css_class("dock-dots");
     tile.append(&spacer);
@@ -651,7 +660,7 @@ pub fn trash_tile(host: Rc<Host>) -> gtk::Widget {
                 .query_info("trash::item-count", gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE)
                 .map(|i| i.attribute_uint32("trash::item-count"))
                 .unwrap_or(0);
-            image.set_icon_name(Some(if count > 0 { "user-trash-full" } else { "user-trash" }));
+            image.set_icon_name(Some(if count > 0 { "user-trash-full-symbolic" } else { "user-trash-symbolic" }));
             tile.set_tooltip_text(Some(&if count > 0 { format!("Trash · {count} items") } else { "Trash".into() }));
             tile.set_widget_name(if count > 0 { "full" } else { "empty" });
         }
