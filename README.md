@@ -44,13 +44,13 @@ nyx-dock --disable   # stop it and turn Omarchy's dock back on
   goes. Drop a pinned app or a folder outside the dock to remove it. Drop files on an
   app to open them with it, on a folder to copy them there, on the Trash to trash them.
 - Right-click the dock itself (between icons, or the Apps button) for its settings: icon
-  size, position, hiding, window previews, the Apps button and the Trash, Add Folder…
-  and, with Nyx Settings, Dock Settings….
-- Add a folder with Add Folder…, or drag one from your file manager onto the dock
+  size, position, hiding, window previews, the Apps button and the Trash, with buttons
+  to add a folder and, with Nyx Settings, to open its Dock page.
+- Add a folder from the dock's menu, or drag one from your file manager onto the dock
   (on the line before the folders, or between them).
 - Folders show their newest files stacked (or the folder icon) with a count, and open as
   a fan, a grid, a list or in your file manager, sorted by date, name or kind: right-click
-  a folder to choose. Grids and lists scroll. Click a file to open it, or drag it out to
+  a folder to choose. Grids and lists show every file and scroll. Click a file to open it, or drag it out to
   another app. Removing a folder from the dock never touches the folder.
 - Trash shows when it has something in it, opens in your file manager, and empties from
   its menu after a second click.

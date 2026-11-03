@@ -1,8 +1,8 @@
 //! What the dock shows: pinned apps in pin order, then running apps that aren't pinned,
 //! in the order they started.
 
-use nyx_desktop::apps::{Index, key_for};
 use crate::config::Running;
+use nyx_desktop::apps::{Index, key_for};
 use nyx_desktop::{Desktop, Monitor, Window};
 
 /// Omarchy minimizes a window by moving it to this special workspace.

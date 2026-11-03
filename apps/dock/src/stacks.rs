@@ -64,71 +64,181 @@ fn list(dir: &Path) -> Vec<Listed> {
 }
 
 fn contents(dir: &Path, sort: Sort) -> Vec<Listed> {
-    let mut all = list(dir);
-    let order: Vec<String> = sorted(all.iter().map(|l| l.entry.clone()).collect(), sort).into_iter().map(|e| e.name).collect();
-    all.retain(|l| order.contains(&l.entry.name));
-    all.sort_by_key(|l| order.iter().position(|n| *n == l.entry.name));
-    all
+    let mut by_name: std::collections::HashMap<String, Listed> =
+        list(dir).into_iter().map(|l| (l.entry.name.clone(), l)).collect();
+    let entries: Vec<FileEntry> = by_name.values().map(|l| l.entry.clone()).collect();
+    sorted(entries, sort).into_iter().filter_map(|e| by_name.remove(&e.name)).collect()
 }
 
-/// A small picture of a file: its cached thumbnail, a fresh one for an image, else its
-/// type's icon.
+/// A file's picture in a fixed-size frame: its type's icon until a thumbnail (from the
+/// cache, or decoded for an image) has loaded over it. A frame can be bound to another
+/// file, as the grid and list reuse theirs while they scroll.
+#[derive(Clone)]
+struct Thumb {
+    frame: gtk::Overlay,
+    icon: gtk::Image,
+    pic: gtk::Picture,
+}
+
+impl Thumb {
+    fn new(w: i32, h: i32) -> Thumb {
+        let frame = gtk::Overlay::new();
+        frame.add_css_class("stack-thumb");
+        frame.set_overflow(gtk::Overflow::Hidden);
+        let base = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        base.set_size_request(w, h);
+        frame.set_child(Some(&base));
+        let icon = gtk::Image::new();
+        icon.set_pixel_size(w.min(h) * 2 / 3);
+        icon.set_halign(gtk::Align::Center);
+        icon.set_valign(gtk::Align::Center);
+        frame.add_overlay(&icon);
+        let pic = gtk::Picture::new();
+        pic.set_content_fit(gtk::ContentFit::Cover);
+        pic.set_can_shrink(true);
+        pic.set_visible(false);
+        frame.add_overlay(&pic);
+        Thumb { frame, icon, pic }
+    }
+
+    /// Show `l`. `current` says whether the frame still shows it when its picture
+    /// arrives (a reused frame may have moved on).
+    fn bind(&self, l: &Listed, current: impl Fn() -> bool + 'static) {
+        match &l.icon {
+            Some(icon) => self.icon.set_from_gicon(icon),
+            None => self.icon.set_icon_name(Some("text-x-generic")),
+        }
+        self.icon.set_visible(true);
+        self.pic.set_paintable(None::<&gdk::Paintable>);
+        self.pic.set_visible(false);
+        let source = match l.thumb.as_ref().filter(|p| p.exists()) {
+            Some(path) => Source::Cached(path.clone()),
+            None if l.entry.kind.starts_with("image/") => Source::Image(l.file.clone()),
+            None => return,
+        };
+        let me = (self.frame.downgrade(), self.icon.downgrade(), self.pic.downgrade());
+        let current = Rc::new(current);
+        let still = {
+            let (frame, current) = (me.0.clone(), current.clone());
+            move || frame.upgrade().is_some() && current()
+        };
+        load(
+            source,
+            Box::new(still),
+            Box::new(move |texture| {
+                if let (Some(icon), Some(pic)) = (me.1.upgrade(), me.2.upgrade())
+                    && current()
+                {
+                    pic.set_paintable(Some(&texture));
+                    pic.set_visible(true);
+                    icon.set_visible(false);
+                }
+            }),
+        );
+    }
+}
+
+/// A small picture of a file, for views that don't reuse their frames.
 fn file_picture(l: &Listed, size: i32) -> gtk::Widget {
     sized_picture(l, size, size * 7 / 8)
 }
 
 fn sized_picture(l: &Listed, w: i32, h: i32) -> gtk::Widget {
-    if let Some(thumb) = l.thumb.as_ref().filter(|p| p.exists()) {
-        let pic = gtk::Picture::for_filename(thumb);
-        pic.set_content_fit(gtk::ContentFit::Cover);
-        pic.set_can_shrink(true);
-        return framed(pic.upcast(), w, h);
-    }
-    let image = gtk::Image::new();
-    image.set_pixel_size(w.min(h) * 2 / 3);
-    match &l.icon {
-        Some(icon) => image.set_from_gicon(icon),
-        None => image.set_icon_name(Some("text-x-generic")),
-    }
-    let holder = framed(image.clone().upcast(), w, h);
-    if l.entry.kind.starts_with("image/") {
-        let (file, holder_weak) = (l.file.clone(), holder.downgrade());
-        glib::MainContext::default().spawn_local(async move {
-            let Some(texture) = thumbnail(&file).await else { return };
-            let Some(holder) = holder_weak.upgrade().and_downcast::<gtk::Overlay>() else { return };
-            let pic = gtk::Picture::for_paintable(&texture);
-            pic.set_content_fit(gtk::ContentFit::Cover);
-            pic.set_can_shrink(true);
-            holder.add_overlay(&pic);
-        });
-    }
-    holder
+    let thumb = Thumb::new(w, h);
+    thumb.bind(l, || true);
+    thumb.frame.upcast()
 }
 
-/// A fixed-size frame the picture fills (pictures otherwise ask for their pixel size).
+/// A fixed-size frame around an icon.
 fn framed(child: gtk::Widget, w: i32, h: i32) -> gtk::Widget {
-    let frame = gtk::Overlay::new();
-    frame.add_css_class("stack-thumb");
-    frame.set_overflow(gtk::Overflow::Hidden);
-    let base = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    base.set_size_request(w, h);
-    frame.set_child(Some(&base));
-    child.set_halign(gtk::Align::Fill);
-    child.set_valign(gtk::Align::Fill);
-    if child.is::<gtk::Image>() {
-        child.set_halign(gtk::Align::Center);
-        child.set_valign(gtk::Align::Center);
+    let thumb = Thumb::new(w, h);
+    thumb.icon.set_visible(false);
+    child.set_halign(gtk::Align::Center);
+    child.set_valign(gtk::Align::Center);
+    thumb.frame.add_overlay(&child);
+    thumb.frame.upcast()
+}
+
+enum Source {
+    /// A thumbnail in the cache.
+    Cached(PathBuf),
+    /// An image with none yet.
+    Image(gio::File),
+}
+
+struct Job {
+    source: Source,
+    /// Whether it's still wanted: a frame scrolled past or closed skips its turn.
+    wanted: Box<dyn Fn() -> bool>,
+    done: Box<dyn FnOnce(gdk::Texture)>,
+}
+
+/// Pictures load a few at a time, in the order they were asked for, so a folder of
+/// thousands of photos never has them all decoding at once.
+const LOADING_MAX: usize = 4;
+
+thread_local! {
+    static JOBS: RefCell<std::collections::VecDeque<Job>> = RefCell::default();
+    static LOADING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn load(source: Source, wanted: Box<dyn Fn() -> bool>, done: Box<dyn FnOnce(gdk::Texture)>) {
+    JOBS.with(|j| j.borrow_mut().push_back(Job { source, wanted, done }));
+    next_job();
+}
+
+fn next_job() {
+    while LOADING.with(|l| l.get()) < LOADING_MAX {
+        let Some(job) = JOBS.with(|j| j.borrow_mut().pop_front()) else { return };
+        if !(job.wanted)() {
+            continue;
+        }
+        LOADING.with(|l| l.set(l.get() + 1));
+        glib::MainContext::default().spawn_local(async move {
+            let texture = match job.source {
+                Source::Cached(path) => gio::spawn_blocking(move || gdk::Texture::from_filename(path).ok()).await.ok().flatten(),
+                Source::Image(file) => thumbnail(&file).await,
+            };
+            LOADING.with(|l| l.set(l.get() - 1));
+            if let Some(texture) = texture
+                && (job.wanted)()
+            {
+                (job.done)(texture);
+            }
+            next_job();
+        });
     }
-    frame.add_overlay(&child);
-    frame.upcast()
+}
+
+/// Write a thumbnail to the cache: encoded by GdkPixbuf's own worker thread, to a
+/// temporary file that's then renamed into place.
+async fn save_thumbnail(pixbuf: &gtk::gdk_pixbuf::Pixbuf, uri: &str, mtime: i64) {
+    let Some(md5) = glib::compute_checksum_for_data(glib::ChecksumType::Md5, uri.as_bytes()) else { return };
+    let dir = glib::user_cache_dir().join("thumbnails/normal");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let (path, tmp) = (dir.join(format!("{md5}.png")), gio::File::for_path(dir.join(format!("{md5}.nyx-dock.tmp"))));
+    let Ok(out) = tmp.replace_future(None, false, gio::FileCreateFlags::PRIVATE, glib::Priority::LOW).await else { return };
+    let mtime = mtime.to_string();
+    let opts = [("tEXt::Thumb::URI", uri), ("tEXt::Thumb::MTime", mtime.as_str())];
+    let saved = pixbuf.save_to_streamv_future(&out, "png", &opts).await.is_ok();
+    let closed = out.close_future(glib::Priority::LOW).await.is_ok();
+    if saved && closed {
+        if let Some(t) = tmp.path() {
+            let _ = std::fs::rename(t, &path);
+        }
+    } else {
+        let _ = tmp.delete_future(glib::Priority::LOW).await;
+    }
 }
 
 /// Decode an image at thumbnail size off the main thread, and save it to the
-/// freedesktop cache (`~/.cache/thumbnails/normal/<md5 of the URI>.png`).
+/// freedesktop cache (`~/.cache/thumbnails/normal/<md5 of the URI>.png`), also off it.
 async fn thumbnail(file: &gio::File) -> Option<gdk::Texture> {
     let stream = file.read_future(glib::Priority::LOW).await.ok()?;
     let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream_at_scale_future(&stream, 128, 128, true).await.ok()?;
-    let uri = file.uri();
+    let uri = file.uri().to_string();
     let mtime = file
         .query_info_future("time::modified", gio::FileQueryInfoFlags::NONE, glib::Priority::LOW)
         .await
@@ -136,20 +246,10 @@ async fn thumbnail(file: &gio::File) -> Option<gdk::Texture> {
         .and_then(|i| i.modification_date_time())
         .map(|t| t.to_unix());
     if let Some(mtime) = mtime {
-        let md5 = glib::compute_checksum_for_data(glib::ChecksumType::Md5, uri.as_bytes())?;
-        let dir = glib::user_cache_dir().join("thumbnails/normal");
-        if std::fs::create_dir_all(&dir).is_ok() {
-            let path = dir.join(format!("{md5}.png"));
-            let tmp = dir.join(format!("{md5}.nyx-dock.tmp"));
-            let opts = [("tEXt::Thumb::URI", uri.as_str()), ("tEXt::Thumb::MTime", &mtime.to_string())];
-            if pixbuf.savev(&tmp, "png", &opts).is_ok() {
-                let _ = std::fs::rename(&tmp, &path);
-            }
-        }
+        save_thumbnail(&pixbuf, &uri, mtime).await;
     }
     Some(gdk::Texture::for_pixbuf(&pixbuf))
 }
-
 fn age(modified: i64) -> String {
     let Ok(now) = glib::DateTime::now_local() else { return String::new() };
     let Ok(then) = glib::DateTime::from_unix_local(modified) else { return String::new() };
@@ -464,12 +564,7 @@ fn folder_menu(tile: &gtk::Box, uri: &str, folder: &Folder, set: SetFolder, host
     let model = gio::Menu::new();
     choices(&model, "Sort by", "sort", &[("Date Added", "date"), ("Name", "name"), ("Kind", "kind")]);
     choices(&model, "Display as", "look", &[("Stack", "stack"), ("Folder", "folder")]);
-    choices(
-        &model,
-        "View content as",
-        "open",
-        &[("Fan", "fan"), ("Grid", "grid"), ("List", "list"), ("Open in Files", "files")],
-    );
+    choices(&model, "View content as", "open", &[("Fan", "fan"), ("Grid", "grid"), ("List", "list"), ("Files", "files")]);
     let last = gio::Menu::new();
     last.append(Some("Open in Files"), Some("folder.open-files"));
     last.append(Some("Remove from Dock"), Some("folder.remove"));
@@ -525,8 +620,6 @@ fn show_popover(pop: &impl IsA<gtk::Popover>, tile: &impl IsA<gtk::Widget>, host
 
 // ---------- Folder views ----------
 
-/// The most files a grid or list shows (it scrolls); past that, Open in Files.
-const SHOWN_MAX: usize = 500;
 const FAN_MAX: usize = 8;
 
 /// A view's handle to redraw itself.
@@ -545,15 +638,7 @@ pub fn scroller(child: &impl IsA<gtk::Widget>, max: i32) -> gtk::ScrolledWindow 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn open_view(
-    tile: &gtk::Box,
-    folder: &Folder,
-    dir: &Path,
-    name: &str,
-    view: FolderOpen,
-    host: Rc<Host>,
-    set: SetFolder,
-) {
+fn open_view(tile: &gtk::Box, folder: &Folder, dir: &Path, name: &str, view: FolderOpen, host: Rc<Host>, set: SetFolder) {
     let pop = gtk::Popover::new();
     pop.add_css_class("dock-stack");
     let uri = gio::File::for_path(dir).uri().to_string();
@@ -603,9 +688,9 @@ fn open_view(
                 empty.add_css_class("stack-empty");
                 body.append(&empty);
             } else if view == FolderOpen::List {
-                body.append(&scroller(&list_view(&items, close), host.max_height));
+                body.append(&scroller(&file_view(items, false, close), host.max_height));
             } else {
-                body.append(&scroller(&grid_view(&items, close), host.max_height));
+                body.append(&scroller(&file_view(items, true, close), host.max_height));
             }
         })
     };
@@ -700,57 +785,123 @@ fn file_actions(w: &gtk::Widget, l: &Listed, close: impl Fn() + Clone + 'static)
     w.add_controller(drag);
 }
 
-fn grid_view(items: &[Listed], close: impl Fn() + Clone + 'static) -> gtk::Widget {
-    let grid = gtk::FlowBox::new();
-    grid.add_css_class("stack-grid");
-    grid.set_min_children_per_line(4);
-    grid.set_max_children_per_line(4);
-    grid.set_selection_mode(gtk::SelectionMode::None);
-    grid.set_homogeneous(true);
-    for l in items.iter().take(SHOWN_MAX) {
-        let cell = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        cell.add_css_class("stack-file");
-        let pic = file_picture(l, 64);
-        pic.set_halign(gtk::Align::Center);
-        cell.append(&pic);
-        let name = gtk::Label::new(Some(&l.entry.name));
-        name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        name.set_max_width_chars(12);
-        name.add_css_class("stack-name");
-        cell.append(&name);
-        let when = gtk::Label::new(Some(&age(l.entry.modified)));
-        when.add_css_class("stack-when");
-        cell.append(&when);
-        cell.set_tooltip_text(Some(&l.entry.name));
-        file_actions(cell.upcast_ref(), l, close.clone());
-        grid.insert(&cell, -1);
-        if let Some(child) = grid.last_child() {
-            child.set_focusable(false);
-        }
-    }
-    grid.upcast()
+/// Each list item's cell parts, to find them again when it's bound to another file.
+type Cells = Vec<(glib::WeakRef<gtk::ListItem>, Rc<Cell>)>;
+
+/// The parts of a reused cell: its picture and two labels.
+struct Cell {
+    thumb: Thumb,
+    name: gtk::Label,
+    when: gtk::Label,
 }
 
-fn list_view(items: &[Listed], close: impl Fn() + Clone + 'static) -> gtk::Widget {
-    let col = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    col.add_css_class("stack-list");
-    for l in items.iter().take(SHOWN_MAX) {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        row.add_css_class("stack-row");
-        row.append(&file_picture(l, 28));
-        let name = gtk::Label::new(Some(&l.entry.name));
+/// Every file of the folder in a list model; the grid and list draw only the cells on
+/// screen and reuse them as they scroll, so any number of files stays quick.
+fn file_view(items: Vec<Listed>, grid: bool, close: impl Fn() + Clone + 'static) -> gtk::Widget {
+    let store = gio::ListStore::new::<glib::BoxedAnyObject>();
+    let objects: Vec<glib::BoxedAnyObject> = items.into_iter().map(glib::BoxedAnyObject::new).collect();
+    store.extend_from_slice(&objects);
+    let cells: Rc<RefCell<Cells>> = Rc::default();
+    let factory = gtk::SignalListItemFactory::new();
+
+    let c = cells.clone();
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else { return };
+        item.set_activatable(false);
+        item.set_focusable(false);
+        let (root, thumb) = if grid {
+            let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            root.add_css_class("stack-file");
+            let thumb = Thumb::new(64, 56);
+            thumb.frame.set_halign(gtk::Align::Center);
+            (root, thumb)
+        } else {
+            let root = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            root.add_css_class("stack-row");
+            (root, Thumb::new(28, 24))
+        };
+        root.append(&thumb.frame);
+        let name = gtk::Label::new(None);
         name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        name.set_hexpand(true);
-        name.set_xalign(0.0);
-        name.set_max_width_chars(28);
-        row.append(&name);
-        let when = gtk::Label::new(Some(&age(l.entry.modified)));
+        name.add_css_class("stack-name");
+        if grid {
+            name.set_max_width_chars(12);
+            name.set_width_chars(12);
+        } else {
+            name.set_hexpand(true);
+            name.set_xalign(0.0);
+            name.set_max_width_chars(28);
+            name.set_width_chars(28);
+        }
+        root.append(&name);
+        let when = gtk::Label::new(None);
         when.add_css_class("stack-when");
-        row.append(&when);
-        file_actions(row.upcast_ref(), l, close.clone());
-        col.append(&row);
+        root.append(&when);
+
+        // The file under the pointer is whichever this cell shows now.
+        let shown = {
+            let iw = item.downgrade();
+            move || -> Option<gio::File> {
+                let obj = iw.upgrade()?.item().and_downcast::<glib::BoxedAnyObject>()?;
+                let file = obj.borrow::<Listed>().file.clone();
+                Some(file)
+            }
+        };
+        let click = gtk::GestureClick::new();
+        let (s, cl) = (shown.clone(), close.clone());
+        click.connect_released(move |_, _, _, _| {
+            if let Some(file) = s() {
+                launch::open_default(&file.uri());
+                cl();
+            }
+        });
+        root.add_controller(click);
+        let drag = gtk::DragSource::new();
+        drag.set_actions(gdk::DragAction::COPY | gdk::DragAction::MOVE);
+        drag.connect_prepare(move |_, _, _| {
+            let file = shown()?;
+            Some(gdk::ContentProvider::for_value(&gdk::FileList::from_array(&[file]).to_value()))
+        });
+        root.add_controller(drag);
+
+        item.set_child(Some(&root));
+        let mut c = c.borrow_mut();
+        c.retain(|(w, _)| w.upgrade().is_some());
+        c.push((item.downgrade(), Rc::new(Cell { thumb, name, when })));
+    });
+
+    let c = cells.clone();
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else { return };
+        let Some(obj) = item.item().and_downcast::<glib::BoxedAnyObject>() else { return };
+        let Some(cell) = c.borrow().iter().find(|(w, _)| w.upgrade().as_ref() == Some(item)).map(|(_, c)| c.clone()) else {
+            return;
+        };
+        let l = obj.borrow::<Listed>();
+        cell.name.set_text(&l.entry.name);
+        cell.when.set_text(&age(l.entry.modified));
+        if let Some(root) = item.child() {
+            root.set_tooltip_text(Some(&l.entry.name));
+        }
+        let (iw, ow) = (item.downgrade(), obj.downgrade());
+        cell.thumb.bind(&l, move || {
+            let (Some(item), Some(obj)) = (iw.upgrade(), ow.upgrade()) else { return false };
+            item.item().is_some_and(|i| i == obj.upcast::<glib::Object>())
+        });
+    });
+
+    let model = gtk::NoSelection::new(Some(store));
+    if grid {
+        let view = gtk::GridView::new(Some(model), Some(factory));
+        view.add_css_class("stack-grid");
+        view.set_min_columns(4);
+        view.set_max_columns(4);
+        view.upcast()
+    } else {
+        let view = gtk::ListView::new(Some(model), Some(factory));
+        view.add_css_class("stack-list");
+        view.upcast()
     }
-    col.upcast()
 }
 
 /// Newest at the bottom, nearest the dock, curving away as it rises.

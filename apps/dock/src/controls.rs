@@ -9,7 +9,7 @@
 //! read again every [`FOLLOW`]; nothing runs while they don't.
 
 use gtk::prelude::*;
-use gtk::{gdk, glib};
+use gtk::{gdk, gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use nyx_desktop::hypr::Instance;
 use nyx_desktop::{Desktop, actions};
@@ -61,6 +61,10 @@ struct Pill {
     place: RefCell<Option<Place>>,
     follow: RefCell<Option<glib::SourceId>>,
     enabled: std::cell::Cell<bool>,
+    /// A look at Hyprland's focused window is under way (off the main thread), and
+    /// whether another was asked for meanwhile.
+    querying: std::cell::Cell<bool>,
+    again: std::cell::Cell<bool>,
     only: Option<String>,
     desktop: RefCell<std::sync::Arc<Desktop>>,
 }
@@ -126,6 +130,8 @@ impl Pill {
             place: RefCell::default(),
             follow: RefCell::default(),
             enabled: std::cell::Cell::new(false),
+            querying: std::cell::Cell::new(false),
+            again: std::cell::Cell::new(false),
             only,
             desktop: RefCell::default(),
         });
@@ -190,29 +196,27 @@ impl Pill {
         }
     }
 
-    /// Where the dots belong now, if anywhere.
-    fn wanted(&self) -> Option<Place> {
-        if !self.enabled.get() {
-            return None;
-        }
-        let desktop = self.desktop.borrow().clone();
-        if !desktop.connected {
-            return None;
-        }
+    /// The window the dots are for, asked of Hyprland: the focused one, or on a test
+    /// output (`--only`) the window in front there, as focus stays with the user's own
+    /// screens. Blocks: run off the main thread.
+    fn fetch(only: Option<(i64, i64)>) -> Option<Active> {
         let hypr = Instance::find().ok()?;
-        let a: Active = match self.only.as_deref() {
-            // On a test output (`--only`), the window in front there: focus stays
-            // with the user's own screens.
-            Some(only) => {
-                let m = desktop.monitors.iter().find(|m| m.name == only)?;
+        match only {
+            Some((monitor, workspace)) => {
                 let clients: Vec<Active> = hypr.json("clients").ok()?;
                 clients
                     .into_iter()
-                    .filter(|c| c.monitor == m.id && c.workspace.id == m.active_workspace)
-                    .min_by_key(|c| c.focus_history_id)?
+                    .filter(|c| c.monitor == monitor && c.workspace.id == workspace)
+                    .min_by_key(|c| c.focus_history_id)
             }
-            None => hypr.json("activewindow").ok()?,
-        };
+            None => hypr.json("activewindow").ok(),
+        }
+    }
+
+    /// Where the dots belong for window `a`, if anywhere.
+    fn place_for(&self, a: Option<Active>) -> Option<Place> {
+        let a = a?;
+        let desktop = self.desktop.borrow().clone();
         let own = a.tags.iter().any(|t| t.trim_end_matches('*') == OWN_CONTROLS_TAG);
         if a.address.is_empty() || !a.floating || a.fullscreen & 2 != 0 || a.hidden || own || a.workspace.id < 1 {
             return None;
@@ -230,32 +234,59 @@ impl Pill {
         })
     }
 
-    /// Put the dots where they belong; whether they show.
-    fn reposition(&self) -> bool {
-        let want = self.wanted();
+    /// Look again at where the dots belong, without blocking.
+    fn refresh(self: &Rc<Self>) {
+        let desktop = self.desktop.borrow().clone();
+        if !self.enabled.get() || !desktop.connected {
+            self.apply(None);
+            return;
+        }
+        let only = match self.only.as_deref() {
+            Some(only) => match desktop.monitors.iter().find(|m| m.name == only) {
+                Some(m) => Some((m.id, m.active_workspace)),
+                None => {
+                    self.apply(None);
+                    return;
+                }
+            },
+            None => None,
+        };
+        if self.querying.replace(true) {
+            self.again.set(true);
+            return;
+        }
+        let wp = Rc::downgrade(self);
+        glib::MainContext::default().spawn_local(async move {
+            let active = gio::spawn_blocking(move || Pill::fetch(only)).await.ok().flatten();
+            let Some(p) = wp.upgrade() else { return };
+            p.querying.set(false);
+            if p.again.replace(false) {
+                // Things changed while it looked: this answer may be old.
+                p.refresh();
+                return;
+            }
+            let want = p.place_for(active);
+            p.apply(want);
+        });
+    }
+
+    /// Put the dots where they belong, and follow the window while they show.
+    fn apply(self: &Rc<Self>, want: Option<Place>) {
         if *self.place.borrow() != want {
             self.show(want.as_ref());
             *self.place.borrow_mut() = want;
         }
-        self.place.borrow().is_some()
-    }
-
-    fn refresh(self: &Rc<Self>) {
-        let shown = self.reposition();
+        let shown = self.place.borrow().is_some();
         let following = self.follow.borrow().is_some();
         if shown && !following {
             let wp = Rc::downgrade(self);
             let id = glib::timeout_add_local(FOLLOW, move || {
                 let Some(p) = wp.upgrade() else { return glib::ControlFlow::Break };
-                if p.reposition() {
-                    glib::ControlFlow::Continue
-                } else {
-                    p.follow.borrow_mut().take();
-                    glib::ControlFlow::Break
-                }
+                p.refresh();
+                glib::ControlFlow::Continue
             });
             *self.follow.borrow_mut() = Some(id);
-        } else if !shown && following && let Some(id) = self.follow.borrow_mut().take() {
+        } else if !shown && let Some(id) = self.follow.borrow_mut().take() {
             id.remove();
         }
     }

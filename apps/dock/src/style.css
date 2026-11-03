@@ -344,6 +344,21 @@ popover.dock-menu > arrow {
   padding: 0 4px 4px;
 }
 
+/* The grid and list reuse their cells; the views themselves draw nothing. */
+gridview.stack-grid,
+listview.stack-list {
+  background: none;
+}
+
+gridview.stack-grid > child,
+listview.stack-list > row {
+  padding: 0;
+  margin: 0;
+  background: none;
+  outline: none;
+  box-shadow: none;
+}
+
 .stack-file,
 .stack-row {
   padding: 8px 4px 6px;
@@ -416,13 +431,15 @@ popover.dock-fan > contents {
   background: @theme_border;
 }
 
-.dock-settings > button {
-  border-radius: 7px;
-  padding: 6px 8px;
+.dock-menu-actions {
+  padding: 0 4px;
 }
 
-.dock-settings > button label {
-  font-weight: 400;
+.dock-menu-actions > button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 7px;
 }
 
 .dock-seg {

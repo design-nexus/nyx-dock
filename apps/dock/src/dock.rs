@@ -6,8 +6,8 @@ use crate::launch;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
-use nyx_desktop::{Desktop, Monitor, watch};
 use nyx_desktop::apps::Index;
+use nyx_desktop::{Desktop, Monitor, watch};
 use nyx_dock_core::config::{Config, Effective, Hide, Position, first_pins};
 use nyx_dock_core::hide::{Rect, clear_of_dock, mode_here, should_hide};
 use nyx_dock_core::items::{self, Item, MINIMIZED};
@@ -18,6 +18,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// `NYX_DOCK_DEBUG=1` prints what the dock decides.
+/// [`debug`] from a worker thread.
+fn debug_any(msg: impl FnOnce() -> String) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("NYX_DOCK_DEBUG").is_some()) {
+        eprintln!("nyx-dock: {}", msg());
+    }
+}
+
 pub fn debug(msg: impl FnOnce() -> String) {
     thread_local!(static ON: bool = std::env::var_os("NYX_DOCK_DEBUG").is_some());
     if ON.with(|on| *on) {
@@ -77,6 +85,18 @@ struct Dock {
     drag: RefCell<Option<Drag>>,
     /// A file drag over the bar keeps the dock up.
     file_drag: Cell<bool>,
+    /// The Apps button, kept across redraws so an open Apps panel stays open, with the
+    /// icon size and names setting it was made for.
+    apps_tile: RefCell<Option<(gtk::Widget, (u32, bool))>>,
+    /// A redraw put off while a menu or folder hangs off one of the tiles.
+    pending_fill: Cell<bool>,
+    /// Asking Hyprland where the pointer is, to let go of stale holds.
+    checking_pointer: Cell<bool>,
+    /// Floating windows already moved off the dock, by address: where each was when it
+    /// was last moved. Seen there again, the window wouldn't go (an app's minimum
+    /// size), and isn't asked again until it moves.
+    fitted: RefCell<Fitted>,
+    fitting: Cell<bool>,
 }
 
 impl Dock {
@@ -88,6 +108,9 @@ impl Dock {
         matches!(self.position, Position::Bottom | Position::Top)
     }
 }
+
+/// Floating windows moved off the dock: address → where each was then.
+type Fitted = HashMap<String, ([i32; 2], [i32; 2])>;
 
 /// An app on its way to a new place among the pins. While the pointer is over the dock,
 /// `tile` (its own tile) or `gap` (a placeholder for an app from the Apps panel) sits
@@ -101,6 +124,8 @@ struct Drag {
     home: Option<gtk::Widget>,
     gap: Option<gtk::Widget>,
     dropped: bool,
+    /// Started on another monitor's dock (or its Apps panel) and moving over this one.
+    foreign: bool,
 }
 
 pub fn start(app: &gtk::Application, only: Option<String>) {
@@ -150,6 +175,32 @@ pub fn start(app: &gtk::Application, only: Option<String>) {
         }
     });
     std::mem::forget(monitor);
+
+    // The default browser changed (it's in mimeapps.list): the Browser pin shows the new
+    // one. Debounced, as the file is rewritten in steps.
+    let mimeapps = glib::user_config_dir().join("mimeapps.list");
+    if let Ok(fm) = gio::File::for_path(&mimeapps).monitor_file(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE) {
+        let ws = Rc::downgrade(&s);
+        let pending: Rc<Cell<bool>> = Rc::default();
+        fm.connect_changed(move |_, _, _, _| {
+            if pending.replace(true) {
+                return;
+            }
+            let (ws, pending) = (ws.clone(), pending.clone());
+            glib::timeout_add_local_once(Duration::from_millis(300), move || {
+                pending.set(false);
+                let Some(s) = ws.upgrade() else { return };
+                let known: Vec<(String, String)> = s.aliases.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let changed = known.iter().any(|(k, v)| launch::stands_for(k).unwrap_or_else(|| k.clone()) != *v);
+                if changed {
+                    debug(|| "default browser changed".into());
+                    s.aliases.borrow_mut().clear();
+                    refresh_all(&s);
+                }
+            });
+        });
+        std::mem::forget(fm);
+    }
 
     // The settings file changed (Nyx Settings, or by hand).
     let path = Config::path();
@@ -257,8 +308,7 @@ fn save(s: &Rc<Shared>) {
 fn shot_texture(shot: nyx_desktop::capture::Shot) -> gdk::Texture {
     let format = if shot.opaque { gdk::MemoryFormat::B8g8r8x8 } else { gdk::MemoryFormat::B8g8r8a8Premultiplied };
     let stride = shot.stride();
-    gdk::MemoryTexture::new(shot.width as i32, shot.height as i32, format, &glib::Bytes::from_owned(shot.data), stride)
-        .upcast()
+    gdk::MemoryTexture::new(shot.width as i32, shot.height as i32, format, &glib::Bytes::from_owned(shot.data), stride).upcast()
 }
 
 fn build_index() -> Index {
@@ -322,7 +372,11 @@ fn rebuild_docks(s: &Rc<Shared>, refill: bool) {
         d.edge.destroy();
     }
     *s.docks.borrow_mut() = docks;
-    if refill { refresh_all(s) } else { refresh(s) }
+    if refill {
+        refresh_all(s)
+    } else {
+        refresh(s)
+    }
     fit_all(s);
 }
 
@@ -404,6 +458,11 @@ fn new_dock(s: &Rc<Shared>, connector: &str, gmon: &gdk::Monitor, eff: Effective
         size: Cell::new(was_size),
         drag: RefCell::default(),
         file_drag: Cell::new(false),
+        apps_tile: RefCell::default(),
+        pending_fill: Cell::new(false),
+        checking_pointer: Cell::new(false),
+        fitted: RefCell::default(),
+        fitting: Cell::new(false),
     });
 
     let motion = gtk::EventControllerMotion::new();
@@ -467,6 +526,18 @@ fn bar_drops(s: &Rc<Shared>, dock: &Rc<Dock>) {
     let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(dock));
     let over = move |x: f64, y: f64| -> gdk::DragAction {
         let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return gdk::DragAction::empty() };
+        if d.drag.borrow().is_none() {
+            // An app from another monitor's dock: it can be pinned here too.
+            let other = s.docks.borrow().iter().find_map(|o| {
+                let g = o.drag.borrow();
+                g.as_ref().filter(|g| !g.foreign).map(|g| (g.key.clone(), g.source.clone()))
+            });
+            if let Some((key, source)) = other {
+                hold(&s, &d, true);
+                *d.drag.borrow_mut() =
+                    Some(Drag { key, source, tile: None, home: None, gap: None, dropped: false, foreign: true });
+            }
+        }
         if d.drag.borrow().is_some() {
             drag_over(&d, along(&d, x, y));
             return gdk::DragAction::MOVE;
@@ -486,6 +557,10 @@ fn bar_drops(s: &Rc<Shared>, dock: &Rc<Dock>) {
     target.connect_leave(move |_| {
         let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
         drag_left(&d);
+        // A drag from another dock is this dock's only while it's over it.
+        if d.drag.borrow().as_ref().is_some_and(|g| g.foreign) {
+            end_drag(&s, &d);
+        }
         if d.file_drag.replace(false) {
             d.bar.remove_css_class("folder-drop");
             hold(&s, &d, false);
@@ -525,7 +600,39 @@ fn hold(s: &Rc<Shared>, d: &Rc<Dock>, on: bool) {
     } else {
         d.holds.set(d.holds.get().saturating_sub(1));
         evaluate(s, d);
+        catch_up(s, d);
     }
+}
+
+/// A redraw put off while a popover was open, once none is.
+fn catch_up(s: &Rc<Shared>, d: &Rc<Dock>) {
+    if d.pending_fill.get() {
+        let s2 = s.clone();
+        let wd = Rc::downgrade(d);
+        // Once the popover has gone from the tile.
+        glib::idle_add_local_once(move || {
+            if wd.upgrade().is_some_and(|d| d.pending_fill.get() && !tile_popover_open(&d)) {
+                if let Some(d) = wd.upgrade() {
+                    d.pending_fill.set(false);
+                }
+                refresh(&s2);
+            }
+        });
+    }
+}
+
+/// A popover open on one of the tiles (the dock's own menu and the Apps button,
+/// which survive a redraw, don't count).
+fn tile_popover_open(d: &Dock) -> bool {
+    let apps = d.apps_tile.borrow().as_ref().map(|(w, _)| w.clone());
+    let mut child = d.bar.first_child();
+    while let Some(c) = child {
+        if !c.is::<gtk::Popover>() && Some(&c) != apps.as_ref() && popover_open(&c) {
+            return true;
+        }
+        child = c.next_sibling();
+    }
+    false
 }
 
 /// Where a folder dropped at `pos` (along the bar) goes among the folders.
@@ -585,7 +692,8 @@ fn begin_drag(s: &Rc<Shared>, d: &Rc<Dock>, key: &str, source: &gtk::DragSource)
     if let Some(t) = &tile {
         t.add_css_class("dragging");
     }
-    *d.drag.borrow_mut() = Some(Drag { key: key.to_string(), source: source.downgrade(), tile, home, gap: None, dropped: false });
+    *d.drag.borrow_mut() =
+        Some(Drag { key: key.to_string(), source: source.downgrade(), tile, home, gap: None, dropped: false, foreign: false });
 }
 
 /// The pinned tiles in the bar's order, except the one moving.
@@ -771,8 +879,17 @@ fn refresh(s: &Rc<Shared>) {
         debug(|| format!("{}: {} items", d.connector, items.len()));
         if *d.items.borrow() != items {
             let same_apps = d.items.borrow().iter().map(|i| &i.key).eq(items.iter().map(|i| &i.key));
+            let redraw = !same_apps || d.tiles.borrow().is_empty();
+            // Redrawing would take away a menu or a folder open on one of the tiles:
+            // after it closes.
+            if redraw && tile_popover_open(&d) {
+                debug(|| format!("{}: redraw put off while a popover is open", d.connector));
+                d.pending_fill.set(true);
+                evaluate(s, &d);
+                continue;
+            }
             *d.items.borrow_mut() = items;
-            if same_apps && !d.tiles.borrow().is_empty() {
+            if !redraw {
                 // Only state changed (focus, windows, badges): keep the widgets, so a
                 // hover or an open preview isn't torn down.
                 for t in d.tiles.borrow().iter() {
@@ -850,7 +967,12 @@ fn shown_pins(s: &Shared, pins: &[String]) -> Vec<String> {
 /// The pin an app is shown for: a shown app that stands in for a pin (the browser)
 /// is that pin.
 fn pin_source(s: &Shared, d: &Dock, key: &str) -> String {
-    let source = s.aliases.borrow().iter().find(|(from, to)| *to == key && *from != key && d.eff().pinned.contains(from)).map(|(f, _)| f.clone());
+    let source = s
+        .aliases
+        .borrow()
+        .iter()
+        .find(|(from, to)| *to == key && *from != key && d.eff().pinned.contains(from))
+        .map(|(f, _)| f.clone());
     source.unwrap_or_else(|| key.to_string())
 }
 
@@ -889,17 +1011,29 @@ fn item_for(d: &Dock, key: &str) -> Option<Item> {
 
 fn fill(s: &Rc<Shared>, d: &Rc<Dock>) {
     close_preview(s, d);
-    // The dock's own menu hangs off the bar; it stays.
+    // The Apps button stays if it's still the same, so an open Apps panel does too.
+    let apps_key = (d.eff().icon_size, s.config.borrow().app_names);
+    let keep = if s.config.borrow().apps {
+        d.apps_tile.borrow().as_ref().filter(|(_, k)| *k == apps_key).map(|(w, _)| w.clone())
+    } else {
+        None
+    };
+    // The dock's own menu hangs off the bar; it stays too.
     let mut child = d.bar.first_child();
     while let Some(c) = child {
         child = c.next_sibling();
-        if !c.is::<gtk::Popover>() {
+        if !c.is::<gtk::Popover>() && Some(&c) != keep.as_ref() {
             d.bar.remove(&c);
         }
     }
-    if s.config.borrow().apps {
-        let apps = crate::apps::tile(apps_host(s, d));
-        d.bar.prepend(&apps);
+    match keep {
+        Some(apps) => d.bar.reorder_child_after(&apps, None::<&gtk::Widget>),
+        None if s.config.borrow().apps => {
+            let apps = crate::apps::tile(apps_host(s, d));
+            d.bar.prepend(&apps);
+            *d.apps_tile.borrow_mut() = Some((apps, apps_key));
+        }
+        None => *d.apps_tile.borrow_mut() = None,
     }
     let items = d.items.borrow().clone();
     let mut tiles = Vec::new();
@@ -1540,9 +1674,8 @@ fn menu(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, item: &Item) {
         let pop = pop.clone();
         glib::idle_add_local_once(move || pop.unparent());
         if let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) {
-            d.holds.set(d.holds.get().saturating_sub(1));
             d.window.set_keyboard_mode(KeyboardMode::None);
-            evaluate(&s, &d);
+            hold(&s, &d, false);
         }
     });
     pop.popup();
@@ -1640,11 +1773,24 @@ fn setting_row(title: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
     row
 }
 
-/// Buttons side by side, one of them chosen.
-fn segmented(options: &[(&str, &str)], current: &str, on: impl Fn(&str) + 'static) -> gtk::Box {
+/// Buttons side by side, one of them chosen. Each option is a value and a label; with
+/// `icons`, the label is an icon name and `tips` name them.
+fn segmented(options: &[(&str, &str)], icons: Option<&[&str]>, current: &str, on: impl Fn(&str) + 'static) -> gtk::Box {
     let seg = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     seg.add_css_class("dock-seg");
-    let buttons: Vec<gtk::ToggleButton> = options.iter().map(|(_, label)| gtk::ToggleButton::with_label(label)).collect();
+    let buttons: Vec<gtk::ToggleButton> = options
+        .iter()
+        .enumerate()
+        .map(|(i, (_, label))| match icons {
+            Some(tips) => {
+                let b = gtk::ToggleButton::new();
+                b.set_icon_name(label);
+                b.set_tooltip_text(tips.get(i).copied());
+                b
+            }
+            None => gtk::ToggleButton::with_label(label),
+        })
+        .collect();
     for (i, b) in buttons.iter().enumerate() {
         if i > 0 {
             b.set_group(Some(&buttons[0]));
@@ -1720,7 +1866,13 @@ fn dock_menu(s: &Rc<Shared>, d: &Rc<Dock>, x: f64, y: f64) {
     let current = format!("{:?}", eff.position).to_lowercase();
     let a = apply.clone();
     let position = segmented(
-        &[("bottom", "Bottom"), ("left", "Left"), ("right", "Right"), ("top", "Top")],
+        &[
+            ("bottom", "go-bottom-symbolic"),
+            ("left", "go-first-symbolic"),
+            ("right", "go-last-symbolic"),
+            ("top", "go-top-symbolic"),
+        ],
+        Some(&["Bottom", "Left", "Right", "Top"]),
         &current,
         move |v| {
             let p = match v {
@@ -1736,7 +1888,7 @@ fn dock_menu(s: &Rc<Shared>, d: &Rc<Dock>, x: f64, y: f64) {
 
     let current = format!("{:?}", eff.hide).to_lowercase();
     let a = apply.clone();
-    let hiding = segmented(&[("smart", "Smart"), ("always", "Always"), ("never", "Never")], &current, move |v| {
+    let hiding = segmented(&[("smart", "Smart"), ("always", "Always"), ("never", "Never")], None, &current, move |v| {
         let h = match v {
             "always" => Hide::Always,
             "never" => Hide::Never,
@@ -1765,7 +1917,11 @@ fn dock_menu(s: &Rc<Shared>, d: &Rc<Dock>, x: f64, y: f64) {
     col.append(&setting_row("Trash", &switch(config.trash, move |on| a(&|c, _, _| c.trash = on))));
 
     col.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    let add = gtk::Button::with_label("Add Folder…");
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    actions.add_css_class("dock-menu-actions");
+    actions.set_halign(gtk::Align::End);
+    let add = gtk::Button::from_icon_name("folder-new-symbolic");
+    add.set_tooltip_text(Some("Add a folder to the dock"));
     add.add_css_class("flat");
     let (ws, pw) = (Rc::downgrade(s), pop.downgrade());
     add.connect_clicked(move |_| {
@@ -1776,9 +1932,10 @@ fn dock_menu(s: &Rc<Shared>, d: &Rc<Dock>, x: f64, y: f64) {
             choose_folder(&s);
         }
     });
-    col.append(&add);
+    actions.append(&add);
     if launch::settings_installed() {
-        let more = gtk::Button::with_label("Dock Settings…");
+        let more = gtk::Button::from_icon_name("emblem-system-symbolic");
+        more.set_tooltip_text(Some("Dock settings"));
         more.add_css_class("flat");
         let pw = pop.downgrade();
         more.connect_clicked(move |_| {
@@ -1787,8 +1944,9 @@ fn dock_menu(s: &Rc<Shared>, d: &Rc<Dock>, x: f64, y: f64) {
             }
             launch::dock_settings();
         });
-        col.append(&more);
+        actions.append(&more);
     }
+    col.append(&actions);
 
     pop.set_parent(&d.bar);
     pop.set_autohide(!testing());
@@ -1856,27 +2014,8 @@ fn evaluate(s: &Rc<Shared>, d: &Rc<Dock>) {
         reserve(d, false);
     }
     let windows_want = should_hide(mode, &desktop, monitor, dock_rect(d), d.position);
-    if windows_want && (d.hover.get() || d.holds.get() > 0) {
-        let busy = d.holds.get() > 0 && (popover_open(d.bar.upcast_ref()) || drag_live(d));
-        if !busy && !pointer_on(d, monitor) {
-            if d.hover.get() {
-                debug(|| format!("{}: the pointer left without the dock hearing", d.connector));
-                d.hover.set(false);
-            }
-            if d.holds.get() > 0 {
-                let what = format!("drag {}, file drag {}", d.drag.borrow().is_some(), d.file_drag.get());
-                eprintln!("nyx-dock: {}: let go of {} stale hold(s) ({what})", d.connector, d.holds.get());
-                clear_drag(d);
-                d.file_drag.set(false);
-                d.bar.remove_css_class("folder-drop");
-                let mut child = d.bar.first_child();
-                while let Some(c) = child {
-                    c.remove_css_class("drop-hover");
-                    child = c.next_sibling();
-                }
-                d.holds.set(0);
-            }
-        }
+    if windows_want && held_without_reason(d) {
+        check_stale(s, d);
     }
     debug(|| {
         format!(
@@ -1916,13 +2055,64 @@ fn drag_live(d: &Dock) -> bool {
     d.drag.borrow().as_ref().is_some_and(|g| g.source.upgrade().is_some_and(|s| s.drag().is_some()))
 }
 
-/// Whether the pointer is over the dock, asked of Hyprland. A pointer that leaves from
-/// a popover (the Apps panel, a menu) never tells the dock it left.
-fn pointer_on(d: &Dock, monitor: &Monitor) -> bool {
-    let Ok(hypr) = nyx_desktop::hypr::Instance::find() else { return true };
-    let Ok(pos) = hypr.json::<serde_json::Value>("cursorpos") else { return true };
-    let (Some(x), Some(y)) = (pos["x"].as_f64(), pos["y"].as_f64()) else { return true };
-    let (x, y) = (x as i32 - monitor.x, y as i32 - monitor.y);
+/// Kept up by the pointer or a hold, with no popover open or drag going on that would
+/// explain a hold.
+fn held_without_reason(d: &Dock) -> bool {
+    let busy = d.holds.get() > 0 && (popover_open(d.bar.upcast_ref()) || drag_live(d));
+    (d.hover.get() || d.holds.get() > 0) && !busy
+}
+
+/// Ask Hyprland where the pointer is (off the main thread) and, if it's away from the
+/// dock, let go of what keeps the dock up: a pointer that leaves from a popover (the
+/// Apps panel, a menu) never tells the dock it left, and a drag can end unheard.
+fn check_stale(s: &Rc<Shared>, d: &Rc<Dock>) {
+    if d.checking_pointer.replace(true) {
+        return;
+    }
+    let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+    glib::MainContext::default().spawn_local(async move {
+        let pos = gio::spawn_blocking(|| {
+            let hypr = nyx_desktop::hypr::Instance::find().ok()?;
+            let pos = hypr.json::<serde_json::Value>("cursorpos").ok()?;
+            Some((pos["x"].as_f64()? as i32, pos["y"].as_f64()? as i32))
+        })
+        .await
+        .ok()
+        .flatten();
+        let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
+        d.checking_pointer.set(false);
+        let desktop = s.desktop.borrow().clone();
+        let (Some(monitor), Some((x, y))) = (desktop.monitor(&d.connector), pos) else { return };
+        if !held_without_reason(&d) || pointer_on(&d, monitor, x, y) {
+            return;
+        }
+        if d.hover.get() {
+            debug(|| format!("{}: the pointer left without the dock hearing", d.connector));
+            d.hover.set(false);
+        }
+        if d.holds.get() > 0 {
+            let what = format!("drag {}, file drag {}", d.drag.borrow().is_some(), d.file_drag.get());
+            eprintln!("nyx-dock: {}: let go of {} stale hold(s) ({what})", d.connector, d.holds.get());
+            clear_drag(&d);
+            d.file_drag.set(false);
+            d.bar.remove_css_class("folder-drop");
+            let mut child = d.bar.first_child();
+            while let Some(c) = child {
+                c.remove_css_class("drop-hover");
+                child = c.next_sibling();
+            }
+            d.holds.set(0);
+            // The keyboard a menu or the Apps panel took goes with its hold.
+            d.window.set_keyboard_mode(KeyboardMode::None);
+        }
+        evaluate(&s, &d);
+        catch_up(&s, &d);
+    });
+}
+
+/// Whether the pointer at (`x`, `y`) in global coordinates is over the dock.
+fn pointer_on(d: &Dock, monitor: &Monitor, x: i32, y: i32) -> bool {
+    let (x, y) = (x - monitor.x, y - monitor.y);
     let r = dock_rect(d);
     x >= r.x - 4 && x < r.x + r.w + 4 && y >= r.y - 4 && y < r.y + r.h + 4
 }
@@ -1968,41 +2158,69 @@ fn schedule_fit(s: &Rc<Shared>, d: &Rc<Dock>) {
 }
 
 /// Floating windows that reach behind a dock that stays up move off it, and get
-/// smaller if they don't fit. Reads the windows afresh: a dragged window sends no event.
-fn fit_windows(d: &Dock) {
-    use nyx_desktop::actions::Dispatch;
-    let Ok(hypr) = nyx_desktop::hypr::Instance::find() else { return };
-    let Ok(desktop) = Desktop::snapshot(&hypr) else { return };
-    let Some(m) = desktop.monitor(&d.connector) else { return };
-    if d.hidden.get() || hide_here(d, &desktop, m) != Hide::Never {
+/// smaller if they don't fit. Reads the windows afresh (a dragged window sends no event),
+/// off the main thread.
+fn fit_windows(d: &Rc<Dock>) {
+    if d.hidden.get() || d.fitting.replace(true) {
         return;
     }
-    let geo = d.gmon.geometry();
-    let r = dock_rect(d);
-    let dock = Rect { x: m.x + r.x, y: m.y + r.y, w: r.w, h: r.h };
-    let [left, top, right, bottom] = m.reserved;
-    let area = Rect { x: m.x + left, y: m.y + top, w: geo.width() - left - right, h: geo.height() - top - bottom };
-    for w in desktop.visible_windows(m).filter(|w| w.floating && w.fullscreen == 0) {
-        let Some((at, size)) = clear_of_dock(d.position, area, dock, w.at, w.size) else { continue };
-        debug(|| format!("{}: {} {:?} {:?} -> {at:?} {size:?}", d.connector, w.class, w.at, w.size));
-        let (a, target) = (&w.address, format!("window = \"address:0x{}\"", w.address));
-        if size != w.size {
-            let [sw, sh] = size;
-            Dispatch {
-                lua: format!("hl.dsp.window.resize({{ x = {sw}, y = {sh}, relative = false, {target} }})"),
-                classic: format!("resizewindowpixel exact {sw} {sh},address:0x{a}"),
+    let (connector, position, hide) = (d.connector.clone(), d.position, d.eff().hide);
+    let (r, geo) = (dock_rect(d), d.gmon.geometry());
+    let (gw, gh) = (geo.width(), geo.height());
+    let mut fitted = d.fitted.borrow().clone();
+    let wd = Rc::downgrade(d);
+    glib::MainContext::default().spawn_local(async move {
+        let fitted = gio::spawn_blocking(move || {
+            use nyx_desktop::actions::Dispatch;
+            let Ok(hypr) = nyx_desktop::hypr::Instance::find() else { return fitted };
+            let Ok(desktop) = Desktop::snapshot(&hypr) else { return fitted };
+            let Some(m) = desktop.monitor(&connector) else { return fitted };
+            if mode_here(hide, floating_here(&desktop, m)) != Hide::Never {
+                return HashMap::new();
             }
-            .run_on(&hypr);
-        }
-        let (dx, dy) = (at[0] - w.at[0], at[1] - w.at[1]);
-        if dx != 0 || dy != 0 {
-            Dispatch {
-                lua: format!("hl.dsp.window.move({{ x = {dx}, y = {dy}, relative = true, {target} }})"),
-                classic: format!("movewindowpixel {dx} {dy},address:0x{a}"),
+            let dock = Rect { x: m.x + r.x, y: m.y + r.y, w: r.w, h: r.h };
+            let [left, top, right, bottom] = m.reserved;
+            let area = Rect { x: m.x + left, y: m.y + top, w: gw - left - right, h: gh - top - bottom };
+            let windows: Vec<_> = desktop.visible_windows(m).filter(|w| w.floating && w.fullscreen == 0).collect();
+            fitted.retain(|a, _| windows.iter().any(|w| w.address == *a));
+            for w in windows {
+                let Some((at, size)) = clear_of_dock(position, area, dock, w.at, w.size) else {
+                    fitted.remove(&w.address);
+                    continue;
+                };
+                // Asked from here before and it didn't move: it can't (its minimum size).
+                if fitted.get(&w.address) == Some(&(w.at, w.size)) {
+                    continue;
+                }
+                fitted.insert(w.address.clone(), (w.at, w.size));
+                debug_any(|| format!("{connector}: {} {:?} {:?} -> {at:?} {size:?}", w.class, w.at, w.size));
+                let (a, target) = (&w.address, format!("window = \"address:0x{}\"", w.address));
+                if size != w.size {
+                    let [sw, sh] = size;
+                    Dispatch {
+                        lua: format!("hl.dsp.window.resize({{ x = {sw}, y = {sh}, relative = false, {target} }})"),
+                        classic: format!("resizewindowpixel exact {sw} {sh},address:0x{a}"),
+                    }
+                    .run_on(&hypr);
+                }
+                let (dx, dy) = (at[0] - w.at[0], at[1] - w.at[1]);
+                if dx != 0 || dy != 0 {
+                    Dispatch {
+                        lua: format!("hl.dsp.window.move({{ x = {dx}, y = {dy}, relative = true, {target} }})"),
+                        classic: format!("movewindowpixel {dx} {dy},address:0x{a}"),
+                    }
+                    .run_on(&hypr);
+                }
             }
-            .run_on(&hypr);
+            fitted
+        })
+        .await
+        .unwrap_or_default();
+        if let Some(d) = wd.upgrade() {
+            *d.fitted.borrow_mut() = fitted;
+            d.fitting.set(false);
         }
-    }
+    });
 }
 
 fn schedule_hide(s: &Rc<Shared>, d: &Rc<Dock>, ms: u64) {
