@@ -101,6 +101,8 @@ impl Pill {
 
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         root.add_css_class("window-pill");
+        root.set_halign(gtk::Align::End);
+        root.set_valign(gtk::Align::Start);
         let mut buttons = Vec::new();
         for (icon, tip) in [
             ("window-minimize-symbolic", "Minimize"),
@@ -111,6 +113,7 @@ impl Pill {
             b.add_css_class("window-pill-button");
             b.set_tooltip_text(Some(tip));
             b.set_focus_on_click(false);
+            b.set_valign(gtk::Align::Center);
             root.append(&b);
             buttons.push((b, icon));
         }
@@ -179,6 +182,11 @@ impl Pill {
             } else {
                 b.set_child(None::<&gtk::Widget>);
             }
+        }
+        // A window only grows to fit its content; asking for the smallest size lets
+        // the surface shrink back to the dots.
+        if !open {
+            self.window.set_default_size(1, 1);
         }
     }
 

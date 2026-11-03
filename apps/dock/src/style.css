@@ -434,7 +434,6 @@ window.window-pill-surface {
   border-color: @theme_border;
   padding: 3px 4px;
   opacity: 1;
-  box-shadow: 0 4px 14px alpha(black, 0.35);
 }
 
 .window-pill-button {
