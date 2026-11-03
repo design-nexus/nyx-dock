@@ -11,6 +11,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use nyx_dock_core::config::{Folder, FolderLook, FolderOpen, Sort};
 use nyx_dock_core::files::{FileEntry, ago, sorted};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -20,11 +21,16 @@ pub struct Host {
     pub hold: Box<dyn Fn(bool)>,
     /// Remove this folder from the dock.
     pub remove: Box<dyn Fn()>,
-    /// Remember a new sort order for this folder.
-    pub set_sort: Box<dyn Fn(Sort)>,
+    /// Remember this folder's new settings (look, view, sort).
+    pub save: Box<dyn Fn(&Folder)>,
     pub side: gtk::PositionType,
     pub icon_size: i32,
+    /// The tallest a folder view grows before it scrolls.
+    pub max_height: i32,
 }
+
+/// Change a folder's settings: saved, and its tile redrawn.
+type SetFolder = Rc<dyn Fn(&dyn Fn(&mut Folder))>;
 
 const ATTRS: &str = "standard::name,standard::display-name,standard::content-type,standard::is-hidden,standard::icon,\
 time::modified,thumbnail::path,thumbnail::failed";
@@ -68,19 +74,23 @@ fn contents(dir: &Path, sort: Sort) -> Vec<Listed> {
 /// A small picture of a file: its cached thumbnail, a fresh one for an image, else its
 /// type's icon.
 fn file_picture(l: &Listed, size: i32) -> gtk::Widget {
+    sized_picture(l, size, size * 7 / 8)
+}
+
+fn sized_picture(l: &Listed, w: i32, h: i32) -> gtk::Widget {
     if let Some(thumb) = l.thumb.as_ref().filter(|p| p.exists()) {
         let pic = gtk::Picture::for_filename(thumb);
         pic.set_content_fit(gtk::ContentFit::Cover);
         pic.set_can_shrink(true);
-        return framed(pic.upcast(), size);
+        return framed(pic.upcast(), w, h);
     }
     let image = gtk::Image::new();
-    image.set_pixel_size(size * 2 / 3);
+    image.set_pixel_size(w.min(h) * 2 / 3);
     match &l.icon {
         Some(icon) => image.set_from_gicon(icon),
         None => image.set_icon_name(Some("text-x-generic")),
     }
-    let holder = framed(image.clone().upcast(), size);
+    let holder = framed(image.clone().upcast(), w, h);
     if l.entry.kind.starts_with("image/") {
         let (file, holder_weak) = (l.file.clone(), holder.downgrade());
         glib::MainContext::default().spawn_local(async move {
@@ -96,12 +106,12 @@ fn file_picture(l: &Listed, size: i32) -> gtk::Widget {
 }
 
 /// A fixed-size frame the picture fills (pictures otherwise ask for their pixel size).
-fn framed(child: gtk::Widget, size: i32) -> gtk::Widget {
+fn framed(child: gtk::Widget, w: i32, h: i32) -> gtk::Widget {
     let frame = gtk::Overlay::new();
     frame.add_css_class("stack-thumb");
     frame.set_overflow(gtk::Overflow::Hidden);
     let base = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    base.set_size_request(size, size * 7 / 8);
+    base.set_size_request(w, h);
     frame.set_child(Some(&base));
     child.set_halign(gtk::Align::Fill);
     child.set_valign(gtk::Align::Fill);
@@ -157,6 +167,7 @@ fn age(modified: i64) -> String {
 
 pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
     let dir = folder.expanded(&glib::home_dir());
+    let folder = Rc::new(RefCell::new(folder.clone()));
     let tile = gtk::Box::new(gtk::Orientation::Vertical, 2);
     tile.add_css_class("dock-item");
     tile.add_css_class("dock-folder");
@@ -170,10 +181,12 @@ pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
         .map(|i| i.display_name().to_string())
         .unwrap_or_else(|_| dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
 
-    let draw = {
-        let (face, folder, dir, host, tile, name) =
-            (face.clone(), folder.clone(), dir.clone(), host.clone(), tile.clone(), name.clone());
-        move || {
+    let draw: Rc<dyn Fn()> = {
+        let (face, folder, dir, host, tile_w, name) =
+            (face.clone(), folder.clone(), dir.clone(), host.clone(), tile.downgrade(), name.clone());
+        Rc::new(move || {
+            let Some(tile) = tile_w.upgrade() else { return };
+            let folder = folder.borrow().clone();
             clear_overlay(&face);
             let items = contents(&dir, folder.sort);
             let size = host.icon_size;
@@ -181,8 +194,9 @@ pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
                 let base = gtk::Box::new(gtk::Orientation::Horizontal, 0);
                 base.set_size_request(size, size);
                 face.set_child(Some(&base));
+                // Portrait cards nearly the tile's size, so the stack reads as big as an app icon.
                 for (i, l) in items.iter().take(3).enumerate().collect::<Vec<_>>().into_iter().rev() {
-                    let card = file_picture(l, size * 5 / 8);
+                    let card = sized_picture(l, size * 3 / 4, size * 7 / 8);
                     card.add_css_class("stack-card");
                     card.add_css_class(&format!("stack-card-{i}"));
                     card.set_halign(gtk::Align::Center);
@@ -190,19 +204,7 @@ pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
                     face.add_overlay(&card);
                 }
             } else {
-                let image = gtk::Image::new();
-                image.set_pixel_size(size);
-                let icon = folder.icon.clone().map(|n| gio::ThemedIcon::new(&n).upcast::<gio::Icon>()).or_else(|| {
-                    gio::File::for_path(&dir)
-                        .query_info("standard::icon", gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE)
-                        .ok()
-                        .and_then(|i| i.icon())
-                });
-                match icon {
-                    Some(icon) => image.set_from_gicon(&icon),
-                    None => image.set_icon_name(Some("folder")),
-                }
-                face.set_child(Some(&image));
+                face.set_child(Some(&folder_face(folder.icon.as_deref(), size)));
             }
             if !items.is_empty() {
                 let count = gtk::Label::new(Some(&if items.len() > 99 { "99+".into() } else { items.len().to_string() }));
@@ -212,14 +214,22 @@ pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
                 face.add_overlay(&count);
             }
             tile.set_tooltip_text(Some(&format!("{name} · {} items", items.len())));
-        }
+        })
     };
     draw();
+    let set: SetFolder = {
+        let (folder, host, draw) = (folder.clone(), host.clone(), draw.clone());
+        Rc::new(move |change: &dyn Fn(&mut Folder)| {
+            change(&mut folder.borrow_mut());
+            (host.save)(&folder.borrow());
+            draw();
+        })
+    };
 
     // Redraw when the folder changes (debounced: a download writes many times).
     if let Ok(monitor) = gio::File::for_path(&dir).monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE) {
         let pending: Rc<std::cell::Cell<bool>> = Rc::default();
-        let draw = Rc::new(draw);
+        let draw = draw.clone();
         monitor.connect_changed(move |_, _, _, _| {
             if pending.replace(true) {
                 return;
@@ -236,32 +246,40 @@ pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
 
     let click = gtk::GestureClick::new();
     click.set_button(0);
-    let (folder_c, dir_c, host_c, tile_w, name_c) = (folder.clone(), dir.clone(), host.clone(), tile.downgrade(), name.clone());
+    let (folder_c, dir_c, host_c, tile_w, name_c, set_c) =
+        (folder.clone(), dir.clone(), host.clone(), tile.downgrade(), name.clone(), set.clone());
     click.connect_released(move |g, _, _, _| {
         let Some(tile) = tile_w.upgrade() else { return };
         let uri = gio::File::for_path(&dir_c).uri();
+        let folder = folder_c.borrow().clone();
         match g.current_button() {
-            1 => match folder_c.open {
+            1 => match folder.open {
                 FolderOpen::Files => launch::open_default(&uri),
-                view => open_view(&tile, &folder_c, &dir_c, &name_c, view, host_c.clone()),
+                view => open_view(&tile, &folder, &dir_c, &name_c, view, host_c.clone(), set_c.clone()),
             },
-            3 => folder_menu(&tile, &uri, host_c.clone()),
+            3 => folder_menu(&tile, &uri, &folder, set_c.clone(), host_c.clone()),
             _ => {}
         }
     });
     tile.add_controller(click);
 
-    // A test hook (NYX_DOCK_TEST_FOLDER): opens the view as a click would.
-    if std::env::var_os("NYX_DOCK_TEST_FOLDER").is_some() {
+    // A test hook (NYX_DOCK_TEST_FOLDER): opens the view as a click would, or the
+    // folder's menu with NYX_DOCK_TEST_FOLDER=menu.
+    if let Some(test) = std::env::var_os("NYX_DOCK_TEST_FOLDER") {
         let actions = gio::SimpleActionGroup::new();
         let open = gio::SimpleAction::new("open", None);
-        let (folder_t, dir_t, host_t, tile_t, name_t) =
-            (folder.clone(), dir.clone(), host.clone(), tile.downgrade(), name.clone());
+        let (folder_t, dir_t, host_t, tile_t, name_t, set_t) =
+            (folder.clone(), dir.clone(), host.clone(), tile.downgrade(), name.clone(), set.clone());
         open.connect_activate(move |_, _| {
-            if let Some(tile) = tile_t.upgrade() {
-                let view = if folder_t.open == FolderOpen::Files { FolderOpen::Grid } else { folder_t.open };
-                open_view(&tile, &folder_t, &dir_t, &name_t, view, host_t.clone());
+            let Some(tile) = tile_t.upgrade() else { return };
+            let folder = folder_t.borrow().clone();
+            if test == "menu" {
+                let uri = gio::File::for_path(&dir_t).uri();
+                folder_menu(&tile, &uri, &folder, set_t.clone(), host_t.clone());
+                return;
             }
+            let view = if folder.open == FolderOpen::Files { FolderOpen::Grid } else { folder.open };
+            open_view(&tile, &folder, &dir_t, &name_t, view, host_t.clone(), set_t.clone());
         });
         actions.add_action(&open);
         tile.insert_action_group("folder-test", Some(&actions));
@@ -310,6 +328,59 @@ pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
     tile.upcast()
 }
 
+/// A folder as a 2.0 tile: the satin square the Trash uses, with the folder glyph (or
+/// the folder's own icon name, if the settings give one).
+fn folder_face(icon: Option<&str>, size: i32) -> gtk::Widget {
+    let satin = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    satin.add_css_class("dock-satin");
+    satin.set_size_request(size, size);
+    satin.set_halign(gtk::Align::Center);
+    let glyph_size = (size / 2).max(16);
+    let glyph: gtk::Widget = match icon {
+        Some(name) => {
+            let image = gtk::Image::from_icon_name(name);
+            image.set_pixel_size(glyph_size);
+            image.upcast()
+        }
+        None => folder_glyph(glyph_size).upcast(),
+    };
+    glyph.set_vexpand(true);
+    glyph.set_halign(gtk::Align::Center);
+    glyph.set_valign(gtk::Align::Center);
+    satin.append(&glyph);
+    satin.upcast()
+}
+
+/// The 2.0 folder glyph (24 px grid, 1.6 px round strokes), drawn in the tile's colour.
+fn folder_glyph(size: i32) -> gtk::DrawingArea {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let area = gtk::DrawingArea::new();
+    area.set_content_width(size);
+    area.set_content_height(size);
+    area.set_draw_func(|area, cr, w, h| {
+        let scale = w.min(h) as f64 / 24.0;
+        cr.scale(scale, scale);
+        let c = area.color();
+        cr.set_source_rgba(c.red() as f64, c.green() as f64, c.blue() as f64, c.alpha() as f64);
+        cr.set_line_width(1.6);
+        cr.set_line_cap(gtk::cairo::LineCap::Round);
+        cr.set_line_join(gtk::cairo::LineJoin::Round);
+        cr.move_to(3.0, 7.5);
+        cr.arc(5.5, 7.5, 2.5, PI, PI + FRAC_PI_2);
+        cr.line_to(9.0, 5.0);
+        cr.line_to(11.0, 7.2);
+        cr.line_to(18.5, 7.2);
+        cr.arc(18.5, 9.7, 2.5, -FRAC_PI_2, 0.0);
+        cr.line_to(21.0, 17.5);
+        cr.arc(18.5, 17.5, 2.5, 0.0, FRAC_PI_2);
+        cr.line_to(5.5, 20.0);
+        cr.arc(5.5, 17.5, 2.5, FRAC_PI_2, PI);
+        cr.close_path();
+        let _ = cr.stroke();
+    });
+    area
+}
+
 fn clear_overlay(o: &gtk::Overlay) {
     let main = o.child();
     let mut c = o.first_child();
@@ -341,12 +412,89 @@ pub fn hold_while_dragging(drop: &gtk::DropTarget, tile: &gtk::Box, host: Rc<Hos
     });
 }
 
-fn folder_menu(tile: &gtk::Box, uri: &str, host: Rc<Host>) {
+fn sort_name(s: Sort) -> &'static str {
+    match s {
+        Sort::Date => "date",
+        Sort::Name => "name",
+        Sort::Kind => "kind",
+    }
+}
+
+fn look_name(l: FolderLook) -> &'static str {
+    match l {
+        FolderLook::Stack => "stack",
+        FolderLook::Folder => "folder",
+    }
+}
+
+fn open_name(o: FolderOpen) -> &'static str {
+    match o {
+        FolderOpen::Fan => "fan",
+        FolderOpen::Grid => "grid",
+        FolderOpen::List => "list",
+        FolderOpen::Files => "files",
+    }
+}
+
+/// A section of radio items for one of a folder's settings.
+fn choices(model: &gio::Menu, title: &str, action: &str, options: &[(&str, &str)]) {
+    let section = gio::Menu::new();
+    for (label, value) in options {
+        let item = gio::MenuItem::new(Some(label), None);
+        item.set_action_and_target_value(Some(&format!("folder.{action}")), Some(&value.to_variant()));
+        section.append_item(&item);
+    }
+    model.append_section(Some(title), &section);
+}
+
+/// A radio action: its state is the chosen value, and choosing one changes the folder.
+fn choice_action(name: &str, current: &str, set: SetFolder, apply: fn(&mut Folder, &str)) -> gio::SimpleAction {
+    let action = gio::SimpleAction::new_stateful(name, Some(glib::VariantTy::STRING), &current.to_variant());
+    action.connect_change_state(move |a, value| {
+        let Some(value) = value else { return };
+        a.set_state(value);
+        if let Some(v) = value.get::<String>() {
+            set(&|f| apply(f, &v));
+        }
+    });
+    action
+}
+
+fn folder_menu(tile: &gtk::Box, uri: &str, folder: &Folder, set: SetFolder, host: Rc<Host>) {
     let model = gio::Menu::new();
-    model.append(Some("Open in Files"), Some("folder.open"));
-    model.append(Some("Remove from dock"), Some("folder.remove"));
+    choices(&model, "Sort by", "sort", &[("Date Added", "date"), ("Name", "name"), ("Kind", "kind")]);
+    choices(&model, "Display as", "look", &[("Stack", "stack"), ("Folder", "folder")]);
+    choices(
+        &model,
+        "View content as",
+        "open",
+        &[("Fan", "fan"), ("Grid", "grid"), ("List", "list"), ("Open in Files", "files")],
+    );
+    let last = gio::Menu::new();
+    last.append(Some("Open in Files"), Some("folder.open-files"));
+    last.append(Some("Remove from Dock"), Some("folder.remove"));
+    model.append_section(None, &last);
+
     let actions = gio::SimpleActionGroup::new();
-    let open = gio::SimpleAction::new("open", None);
+    actions.add_action(&choice_action("sort", sort_name(folder.sort), set.clone(), |f, v| {
+        f.sort = match v {
+            "name" => Sort::Name,
+            "kind" => Sort::Kind,
+            _ => Sort::Date,
+        }
+    }));
+    actions.add_action(&choice_action("look", look_name(folder.look), set.clone(), |f, v| {
+        f.look = if v == "folder" { FolderLook::Folder } else { FolderLook::Stack }
+    }));
+    actions.add_action(&choice_action("open", open_name(folder.open), set, |f, v| {
+        f.open = match v {
+            "fan" => FolderOpen::Fan,
+            "list" => FolderOpen::List,
+            "files" => FolderOpen::Files,
+            _ => FolderOpen::Grid,
+        }
+    }));
+    let open = gio::SimpleAction::new("open-files", None);
     let uri = uri.to_string();
     open.connect_activate(move |_, _| launch::open_default(&uri));
     actions.add_action(&open);
@@ -365,6 +513,7 @@ fn show_popover(pop: &impl IsA<gtk::Popover>, tile: &impl IsA<gtk::Widget>, host
     let pop = pop.as_ref().clone();
     pop.set_parent(tile);
     pop.set_position(host.side);
+    pop.set_autohide(!crate::dock::testing());
     (host.hold)(true);
     pop.connect_closed(move |p| {
         let p = p.clone();
@@ -376,14 +525,35 @@ fn show_popover(pop: &impl IsA<gtk::Popover>, tile: &impl IsA<gtk::Widget>, host
 
 // ---------- Folder views ----------
 
-const GRID_MAX: usize = 16;
-const LIST_MAX: usize = 20;
+/// The most files a grid or list shows (it scrolls); past that, Open in Files.
+const SHOWN_MAX: usize = 500;
 const FAN_MAX: usize = 8;
 
 /// A view's handle to redraw itself.
 type Refill = Rc<std::cell::RefCell<Option<Rc<dyn Fn()>>>>;
 
-fn open_view(tile: &gtk::Box, folder: &Folder, dir: &Path, name: &str, view: FolderOpen, host: Rc<Host>) {
+/// Scrolls with the wheel or touchpad, without a scrollbar; as tall as its contents
+/// up to `max`.
+pub fn scroller(child: &impl IsA<gtk::Widget>, max: i32) -> gtk::ScrolledWindow {
+    let sw = gtk::ScrolledWindow::new();
+    sw.set_policy(gtk::PolicyType::Never, gtk::PolicyType::External);
+    sw.set_propagate_natural_height(true);
+    sw.set_propagate_natural_width(true);
+    sw.set_max_content_height(max);
+    sw.set_child(Some(child));
+    sw
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_view(
+    tile: &gtk::Box,
+    folder: &Folder,
+    dir: &Path,
+    name: &str,
+    view: FolderOpen,
+    host: Rc<Host>,
+    set: SetFolder,
+) {
     let pop = gtk::Popover::new();
     pop.add_css_class("dock-stack");
     let uri = gio::File::for_path(dir).uri().to_string();
@@ -396,6 +566,7 @@ fn open_view(tile: &gtk::Box, folder: &Folder, dir: &Path, name: &str, view: Fol
     let fill: Rc<dyn Fn()> = {
         let (body, dir, name, uri, pop_w, host, handle) =
             (body.clone(), dir.to_path_buf(), name.to_string(), uri.clone(), pop.downgrade(), host.clone(), handle.clone());
+        let set = set.clone();
         Rc::new(move || {
             while let Some(c) = body.first_child() {
                 body.remove(&c);
@@ -426,15 +597,15 @@ fn open_view(tile: &gtk::Box, folder: &Folder, dir: &Path, name: &str, view: Fol
                     });
                 })
             };
-            body.append(&header(&name, items.len(), &uri, sort.clone(), &host, refill, close.clone()));
+            body.append(&header(&name, items.len(), &uri, sort.clone(), set.clone(), refill, close.clone()));
             if items.is_empty() {
                 let empty = gtk::Label::new(Some("Nothing here"));
                 empty.add_css_class("stack-empty");
                 body.append(&empty);
             } else if view == FolderOpen::List {
-                body.append(&list_view(&items, close));
+                body.append(&scroller(&list_view(&items, close), host.max_height));
             } else {
-                body.append(&grid_view(&items, close));
+                body.append(&scroller(&grid_view(&items, close), host.max_height));
             }
         })
     };
@@ -456,7 +627,7 @@ fn header(
     count: usize,
     uri: &str,
     sort: Rc<std::cell::Cell<Sort>>,
-    host: &Rc<Host>,
+    set: SetFolder,
     refill: Rc<dyn Fn()>,
     close: impl Fn() + Clone + 'static,
 ) -> gtk::Widget {
@@ -487,11 +658,11 @@ fn header(
         } else {
             first = Some(b.clone());
         }
-        let (sort, host, refill) = (sort.clone(), host.clone(), refill.clone());
+        let (sort, set, refill) = (sort.clone(), set.clone(), refill.clone());
         b.connect_toggled(move |b| {
             if b.is_active() && sort.get() != s {
                 sort.set(s);
-                (host.set_sort)(s);
+                set(&|f| f.sort = s);
                 refill();
             }
         });
@@ -536,7 +707,7 @@ fn grid_view(items: &[Listed], close: impl Fn() + Clone + 'static) -> gtk::Widge
     grid.set_max_children_per_line(4);
     grid.set_selection_mode(gtk::SelectionMode::None);
     grid.set_homogeneous(true);
-    for l in items.iter().take(GRID_MAX) {
+    for l in items.iter().take(SHOWN_MAX) {
         let cell = gtk::Box::new(gtk::Orientation::Vertical, 4);
         cell.add_css_class("stack-file");
         let pic = file_picture(l, 64);
@@ -563,7 +734,7 @@ fn grid_view(items: &[Listed], close: impl Fn() + Clone + 'static) -> gtk::Widge
 fn list_view(items: &[Listed], close: impl Fn() + Clone + 'static) -> gtk::Widget {
     let col = gtk::Box::new(gtk::Orientation::Vertical, 0);
     col.add_css_class("stack-list");
-    for l in items.iter().take(LIST_MAX) {
+    for l in items.iter().take(SHOWN_MAX) {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.add_css_class("stack-row");
         row.append(&file_picture(l, 28));
@@ -596,7 +767,7 @@ fn fan(items: &[Listed], uri: &str, close: impl Fn() + Clone + 'static) -> gtk::
     open.append(&label);
     let icon = gtk::Image::from_icon_name("folder-open-symbolic");
     icon.set_pixel_size(24);
-    let frame = framed(icon.upcast(), 48);
+    let frame = framed(icon.upcast(), 48, 42);
     open.append(&frame);
     let (u, c) = (uri.to_string(), close.clone());
     let click = gtk::GestureClick::new();

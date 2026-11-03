@@ -6,6 +6,8 @@
 //! previews = true         # windows of a running app on hover
 //! running = "all"         # all | monitor: running apps from every monitor or this one
 //! pinned = ["io.github.design_nexus.nyx.Files", "firefox"]
+//! apps = true             # the Apps button first
+//! app_names = true        # names under the icons in the Apps panel
 //! window_controls = false # hover buttons on floating windows
 //!
 //! [monitors."Samsung Display Corp.|ATNA60DL01-0|"]   # a monitor's stable id, or its connector
@@ -119,6 +121,16 @@ impl Folder {
             None => PathBuf::from(&self.path),
         }
     }
+
+    /// A folder at `path`, written with `~` when it's in the home folder.
+    pub fn at(path: &Path, home: &Path) -> Folder {
+        let path = match path.strip_prefix(home) {
+            Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => path.display().to_string(),
+        };
+        Folder { path, ..Default::default() }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -139,6 +151,10 @@ pub struct Config {
     pub folders: Vec<Folder>,
     /// The Trash at the end.
     pub trash: bool,
+    /// The Apps button first, which opens every app in a grid.
+    pub apps: bool,
+    /// Names under the icons in the Apps panel (off: icons only).
+    pub app_names: bool,
     /// Hover buttons (minimize, maximize, close) on the focused floating window, for
     /// when Omarchy's floating titlebar is off. Settings sets it.
     pub window_controls: bool,
@@ -159,6 +175,8 @@ impl Default for Config {
             pinned: Vec::new(),
             folders: vec![Folder::default()],
             trash: true,
+            apps: true,
+            app_names: true,
             window_controls: false,
             monitors: BTreeMap::new(),
         }
@@ -224,6 +242,48 @@ impl Config {
             let at = at.unwrap_or(list.len()).min(list.len());
             list.insert(at, app.to_string());
         }
+    }
+
+    /// This monitor's section, if it has one.
+    fn section_mut(&mut self, stable_id: &str, connector: &str) -> Option<&mut MonitorConfig> {
+        let key = self.section(stable_id, connector).map(|(k, _)| k.clone())?;
+        self.monitors.get_mut(&key)
+    }
+
+    /// Set the icon size where this monitor takes it from: its section if that sets
+    /// one, else the shared setting. Likewise [`Config::set_position`] and
+    /// [`Config::set_hide`].
+    pub fn set_icon_size(&mut self, stable_id: &str, connector: &str, size: u32) {
+        let size = size.clamp(*ICON_SIZES.start(), *ICON_SIZES.end());
+        match self.section_mut(stable_id, connector).filter(|m| m.icon_size.is_some()) {
+            Some(m) => m.icon_size = Some(size),
+            None => self.icon_size = size,
+        }
+    }
+
+    pub fn set_position(&mut self, stable_id: &str, connector: &str, position: Position) {
+        match self.section_mut(stable_id, connector).filter(|m| m.position.is_some()) {
+            Some(m) => m.position = Some(position),
+            None => self.position = position,
+        }
+    }
+
+    pub fn set_hide(&mut self, stable_id: &str, connector: &str, hide: Hide) {
+        match self.section_mut(stable_id, connector).filter(|m| m.hide.is_some()) {
+            Some(m) => m.hide = Some(hide),
+            None => self.hide = hide,
+        }
+    }
+
+    /// Add a folder at `at` among the folders (the end if `None`). A folder already in
+    /// the dock isn't added twice; returns whether it was added.
+    pub fn add_folder(&mut self, path: &Path, home: &Path, at: Option<usize>) -> bool {
+        if self.folders.iter().any(|f| f.expanded(home) == path) {
+            return false;
+        }
+        let at = at.unwrap_or(self.folders.len()).min(self.folders.len());
+        self.folders.insert(at, Folder::at(path, home));
+        true
     }
 
     pub fn path() -> PathBuf {
@@ -344,6 +404,32 @@ running = "monitor"
         assert_eq!(c.folders[0].expanded(Path::new("/home/k")), PathBuf::from("/home/k/Projects"));
         let none: Config = toml::from_str("folders = []").unwrap();
         assert!(none.folders.is_empty(), "an empty list means no folders");
+    }
+
+    #[test]
+    fn adding_folders() {
+        let home = Path::new("/home/k");
+        let mut c = Config::default();
+        assert!(c.apps, "the Apps button by default");
+        assert!(!c.add_folder(Path::new("/home/k/Downloads"), home, None), "Downloads is already there");
+        assert!(c.add_folder(Path::new("/home/k/Projects"), home, Some(0)));
+        assert!(c.add_folder(Path::new("/srv/media"), home, Some(9)));
+        let paths: Vec<&str> = c.folders.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["~/Projects", "~/Downloads", "/srv/media"]);
+        assert_eq!(Folder::at(home, home).path, "~");
+    }
+
+    #[test]
+    fn look_goes_where_the_monitor_takes_it_from() {
+        let mut c: Config = toml::from_str(FILE).unwrap();
+        c.set_icon_size("Samsung|Panel|", "eDP-1", 64);
+        assert_eq!((c.monitors["Samsung|Panel|"].icon_size, c.icon_size), (Some(64), 52));
+        c.set_icon_size("X|Y|", "HDMI-A-1", 500);
+        assert_eq!(c.icon_size, 96);
+        c.set_position("Samsung|Panel|", "eDP-1", Position::Left);
+        assert_eq!((c.position, c.monitors["Samsung|Panel|"].position), (Position::Left, None));
+        c.set_hide("X|Y|", "DP-2", Hide::Never);
+        assert_eq!(c.hide, Hide::Never);
     }
 
     #[test]

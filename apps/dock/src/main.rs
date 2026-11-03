@@ -5,6 +5,7 @@
 //! `nyx-dock --disable` undoes both. `--only <connector>` shows the dock on one output
 //! only (for trying it on a test output).
 
+mod apps;
 mod badges;
 mod controls;
 mod dock;

@@ -236,6 +236,18 @@ window.dock-right .dock-sep {
   background: alpha(@theme_accent, 0.16);
 }
 
+/* An app on the move: its place stays open while the others make room. */
+.dock-item.dragging {
+  opacity: 0;
+}
+
+/* A folder dragged over the dock: the line before the folders shows where it goes. */
+.dock-bar.folder-drop .dock-sep {
+  background: @theme_accent;
+  min-width: 2px;
+  min-height: 2px;
+}
+
 .stack-thumb {
   border-radius: 6px;
   background: alpha(@theme_text, 0.05);
@@ -386,6 +398,90 @@ popover.dock-fan > contents {
   border: 1px solid @theme_border;
   border-radius: 8px;
   box-shadow: 0 6px 16px alpha(black, 0.45);
+}
+
+/* The dock's own menu: its look and behaviour. */
+.dock-settings {
+  padding: 6px 4px 4px;
+  min-width: 300px;
+}
+
+.dock-setting {
+  padding: 4px 8px;
+  min-height: 32px;
+}
+
+.dock-settings separator {
+  margin: 6px 4px;
+  background: @theme_border;
+}
+
+.dock-settings > button {
+  border-radius: 7px;
+  padding: 6px 8px;
+}
+
+.dock-settings > button label {
+  font-weight: 400;
+}
+
+.dock-seg {
+  padding: 2px;
+  border-radius: 7px;
+  background: alpha(@theme_text, 0.035);
+}
+
+.dock-seg button {
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 5px;
+  background: none;
+  color: @theme_dim_text;
+  font-size: 12px;
+}
+
+.dock-seg button:checked {
+  background: @theme_raised;
+  color: @theme_text;
+  box-shadow: 0 1px 3px alpha(black, 0.3);
+}
+
+/* The Apps panel: a search field over every app. */
+popover.dock-apps-panel > contents {
+  padding: 10px 8px 8px;
+  transition: opacity 150ms ease-out;
+}
+
+popover.dock-apps-panel.moving > contents {
+  opacity: 0.35;
+}
+
+.apps-search {
+  margin: 0 4px 2px;
+  min-height: 34px;
+  border-radius: 7px;
+}
+
+.apps-grid {
+  padding: 0 2px 2px;
+}
+
+.apps-cell {
+  padding: 6px 2px 5px;
+  border-radius: 11px;
+  transition: background 120ms ease-out;
+}
+
+.apps-grid.icons-only .apps-cell {
+  padding: 6px;
+}
+
+.apps-cell:hover {
+  background: alpha(@theme_accent, 0.14);
+}
+
+.apps-name {
+  font-size: 12px;
 }
 
 .trash-menu {

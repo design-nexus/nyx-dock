@@ -157,6 +157,18 @@ pub fn show_windows(key: &str) {
     spawn(&["nyx-switcher-send".into(), "overview".into(), key.into()]);
 }
 
+/// Whether Nyx Settings is installed (it has a Dock page).
+pub fn settings_installed() -> bool {
+    has("nyx-settings")
+}
+
+/// Open Nyx Settings on its Dock page.
+pub fn dock_settings() {
+    let mut args: Vec<String> = if has("uwsm-app") { vec!["uwsm-app".into(), "--".into()] } else { Vec::new() };
+    args.extend(["nyx-settings".into(), "--section".into(), "dock".into()]);
+    spawn(&args);
+}
+
 /// Empty the Trash.
 pub fn empty_trash() {
     spawn(&["gio".into(), "trash".into(), "--empty".into()]);
