@@ -677,7 +677,7 @@ pub fn trash_tile(host: Rc<Host>) -> gtk::Widget {
     click.connect_released(move |g, _, _, _| {
         let Some(tile) = tw.upgrade() else { return };
         match g.current_button() {
-            1 => launch::open_default("trash:///"),
+            1 => launch::open_trash(),
             3 => trash_menu(&tile, h.clone()),
             _ => {}
         }
@@ -713,7 +713,7 @@ fn trash_menu(tile: &gtk::Box, host: Rc<Host>) {
     open.add_css_class("flat");
     let pw = pop.downgrade();
     open.connect_clicked(move |_| {
-        launch::open_default("trash:///");
+        launch::open_trash();
         if let Some(p) = pw.upgrade() {
             p.popdown();
         }

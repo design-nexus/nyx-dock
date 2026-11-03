@@ -122,6 +122,18 @@ pub fn open_default(uri: &str) {
     }
 }
 
+/// Open the Trash in the file manager. Usually nothing handles `trash:` links, and
+/// `xdg-open` then hands them to the browser.
+pub fn open_trash() {
+    let manager = gtk::gio::AppInfo::default_for_type("inode/directory", false)
+        .and_then(|app| app.id())
+        .map(|id| id.trim_end_matches(".desktop").to_string());
+    match manager {
+        Some(id) => open_with(&id, &["trash:///".into()]),
+        None => open_default("trash:///"),
+    }
+}
+
 /// The app a launcher entry stands for: Omarchy's "Browser" entry
 /// (`omarchy-launch-browser`, no icon of its own) is the default browser it opens.
 /// Other entries stand for themselves.
