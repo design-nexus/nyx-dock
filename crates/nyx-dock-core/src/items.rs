@@ -1,7 +1,7 @@
 //! What the dock shows: pinned apps in pin order, then running apps that aren't pinned,
 //! in the order they started.
 
-use crate::apps::{Index, key_for};
+use nyx_desktop::apps::{Index, key_for};
 use crate::config::Running;
 use nyx_desktop::{Desktop, Monitor, Window};
 
@@ -95,7 +95,7 @@ pub fn next_window<'a>(desktop: &'a Desktop, item: &Item) -> Option<&'a Window> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::apps::Entry;
+    use nyx_desktop::apps::Entry;
     use nyx_desktop::model::Workspace;
 
     fn window(address: &str, class: &str, workspace: i64, monitor: i64, focus: i32) -> Window {

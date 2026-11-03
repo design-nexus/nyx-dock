@@ -5,7 +5,6 @@
 //! `omarchy-launch-tui`. Without uwsm, GIO launches them directly.
 
 use gtk::prelude::*;
-use nyx_desktop::hypr::Instance;
 use std::process::{Command, Stdio};
 
 fn has(program: &str) -> bool {
@@ -81,36 +80,15 @@ pub fn new_instance(id: &str) {
     launch(id, action.as_deref());
 }
 
-fn dispatch(lua: &str, classic: &str) {
-    let Ok(hypr) = Instance::find() else { return };
-    if hypr.dispatch(lua).is_err() {
-        let _ = hypr.dispatch(classic);
-    }
-}
-
 /// Focus a window and raise it. A minimized one (on Omarchy's minimized workspace)
 /// first comes back to the workspace in front of the user.
 pub fn focus(address: &str, minimized: bool, workspace: i64) {
-    let target = format!("window = \"address:0x{address}\"");
-    if minimized && workspace >= 1 {
-        dispatch(
-            &format!("hl.dsp.window.move({{ workspace = \"{workspace}\", {target} }})"),
-            &format!("movetoworkspacesilent {workspace},address:0x{address}"),
-        );
-    }
-    dispatch(&format!("hl.dsp.focus({{ {target} }})"), &format!("focuswindow address:0x{address}"));
-    dispatch(
-        &format!("hl.dsp.window.alter_zorder({{ mode = \"top\", {target} }})"),
-        &format!("alterzorder top,address:0x{address}"),
-    );
+    nyx_desktop::actions::focus(address, minimized, workspace);
 }
 
 /// Ask a window to close (the app may still ask about unsaved work).
 pub fn close(address: &str) {
-    dispatch(
-        &format!("hl.dsp.window.close({{ window = \"address:0x{address}\" }})"),
-        &format!("closewindow address:0x{address}"),
-    );
+    nyx_desktop::actions::close(address);
 }
 
 /// Open files or folders with an app (dropped on its icon).

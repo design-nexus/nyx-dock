@@ -7,7 +7,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use nyx_desktop::{Desktop, Monitor, watch};
-use nyx_dock_core::apps::{Entry, Index};
+use nyx_desktop::apps::Index;
 use nyx_dock_core::config::{Config, Effective, Hide, Position, first_pins};
 use nyx_dock_core::hide::{Rect, should_hide};
 use nyx_dock_core::items::{self, Item, MINIMIZED};
@@ -197,21 +197,16 @@ fn save(s: &Rc<Shared>) {
     });
 }
 
+/// A thumbnail as a GDK texture.
+fn shot_texture(shot: nyx_desktop::capture::Shot) -> gdk::Texture {
+    let format = if shot.opaque { gdk::MemoryFormat::B8g8r8x8 } else { gdk::MemoryFormat::B8g8r8a8Premultiplied };
+    let stride = shot.stride();
+    gdk::MemoryTexture::new(shot.width as i32, shot.height as i32, format, &glib::Bytes::from_owned(shot.data), stride)
+        .upcast()
+}
+
 fn build_index() -> Index {
-    let entries: Vec<Entry> = gio::AppInfo::all()
-        .into_iter()
-        .filter_map(|a| a.downcast::<gio_unix::DesktopAppInfo>().ok())
-        .filter_map(|a| {
-            let id = a.id()?.trim_end_matches(".desktop").to_string();
-            Some(Entry {
-                id,
-                wm_class: a.startup_wm_class().map(|c| c.to_string()),
-                exec: a.string("Exec").map(|c| c.to_string()).unwrap_or_default(),
-                terminal: a.boolean("Terminal"),
-            })
-        })
-        .collect();
-    Index::new(&entries)
+    nyx_desktop::apps::from_gio()
 }
 
 // ---------- Docks ----------
@@ -872,9 +867,9 @@ fn open_preview(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, key: &str) {
 
     let ids: Vec<String> = pictures.keys().cloned().collect();
     let scale = tile.scale_factor().max(1) as u32;
-    crate::capture::capture(ids, THUMB_W as u32 * scale, THUMB_H as u32 * scale, move |shot| {
+    nyx_desktop::capture::capture(ids, THUMB_W as u32 * scale, THUMB_H as u32 * scale, move |shot| {
         if let Some((picture, placeholder)) = pictures.get(&shot.stable_id) {
-            picture.set_paintable(Some(&shot.texture()));
+            picture.set_paintable(Some(&shot_texture(shot)));
             placeholder.set_visible(false);
         }
     });
