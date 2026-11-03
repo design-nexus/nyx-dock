@@ -50,10 +50,10 @@ nyx-dock --disable   # stop it and turn Omarchy's dock back on
   (on the line before the folders, or between them).
 - Folders show their newest files stacked (or the folder icon: with the Umbra icon
   theme, the folder's own, such as Downloads, Games or Dropbox) with a count, and open
-  as a fan, a grid, a list or in your file manager, sorted by date, name or kind: right-
-  click a folder to choose. Grids and lists show every file and scroll. Click a file to
-  open it, or drag it out to another app. Removing a folder from the dock never touches
-  the folder.
+  as a fan, a grid, a list or in your file manager, sorted by date, name or kind:
+  right-click a folder to choose. Grids and lists show every file and scroll. Click a
+  file to open it, or drag it out to another app. Removing a folder from the dock never
+  touches the folder.
 - Trash shows when it has something in it, opens in your file manager, and empties from
   its menu after a second click.
 - Intelligent hiding: the dock hides while a window overlaps it or something is
