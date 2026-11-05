@@ -219,6 +219,119 @@ popover.dock-menu > contents {
   color: @theme_on_accent;
 }
 
+/* An app's card (its right-click): what it has for you, its windows and actions. */
+popover.dock-card > contents {
+  padding: 6px;
+}
+
+.card {
+  min-width: 300px;
+}
+
+.card-header {
+  padding: 6px 8px 8px;
+}
+
+.card-name {
+  font-weight: 600;
+}
+
+.card-status {
+  color: @theme_dim_text;
+  font-size: 12px;
+}
+
+.card-media {
+  padding: 2px 8px 8px;
+  min-width: 0;
+}
+
+.card-section {
+  padding: 4px 0 2px;
+  border-top: 1px solid alpha(@theme_border, 0.7);
+}
+
+.card-section-title {
+  color: @theme_text_tertiary;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px 2px;
+}
+
+button.card-row {
+  padding: 4px 8px;
+  min-height: 34px;
+  border-radius: 7px;
+  font-weight: 400;
+}
+
+button.card-row:hover,
+button.card-row:focus-visible {
+  background: alpha(@theme_accent, 0.14);
+}
+
+.card-row-icon {
+  color: @theme_dim_text;
+}
+
+.card-row-title {
+  font-size: 13px;
+}
+
+.card-row-sub {
+  color: @theme_text_tertiary;
+  font-size: 11.5px;
+  font-feature-settings: "tnum";
+}
+
+.card-note {
+  color: @theme_dim_text;
+  font-size: 12px;
+  padding: 6px 8px 8px;
+}
+
+.card-chips {
+  padding: 4px 6px 6px;
+}
+
+button.card-chip {
+  min-height: 26px;
+  padding: 0 10px;
+  margin: 2px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  background: alpha(@theme_text, 0.06);
+}
+
+button.card-chip:hover {
+  background: alpha(@theme_accent, 0.18);
+}
+
+.card-footer {
+  padding: 6px 2px 0;
+  border-top: 1px solid alpha(@theme_border, 0.7);
+}
+
+button.card-button {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: @theme_dim_text;
+}
+
+button.card-button:hover {
+  background: alpha(@theme_text, 0.08);
+  color: @theme_text;
+}
+
+button.card-button.card-quit:hover {
+  background: alpha(@theme_danger, 0.16);
+  color: @theme_danger;
+}
+
 /* Folders and Trash, after a thin line. */
 .dock-sep {
   min-width: 1px;

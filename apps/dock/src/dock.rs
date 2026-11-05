@@ -982,6 +982,7 @@ fn host(s: &Rc<Shared>, d: &Rc<Dock>, folder: Option<usize>) -> Rc<crate::stacks
         side: popover_side(d.position),
         icon_size: d.eff().icon_size as i32,
         max_height: max_height(d, 460),
+        folder_counts: s.config.borrow().folder_counts,
     })
 }
 
@@ -1139,8 +1140,8 @@ fn fill(s: &Rc<Shared>, d: &Rc<Dock>) {
             }
         });
     }
-    // For screenshots on a test output: open one app's menu without a pointer.
-    if let Ok(key) = std::env::var("NYX_DOCK_TEST_MENU") {
+    // For screenshots on a test output: open one app's card without a pointer.
+    if let Ok(key) = std::env::var("NYX_DOCK_TEST_CARD").or_else(|_| std::env::var("NYX_DOCK_TEST_MENU")) {
         let found = d.tiles.borrow().iter().find(|t| t.key == key).map(|t| t.root.clone());
         if let (Some(tile), Some(it)) = (found, item_for(d, &key)) {
             let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
@@ -1619,110 +1620,45 @@ fn activate(s: &Rc<Shared>, d: &Rc<Dock>, item: &Item) {
     }
 }
 
+/// Right-click on an app: its card.
 fn menu(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, item: &Item) {
-    let is_app = !item.key.starts_with("class:");
-    let info = if is_app { launch::info(&item.key) } else { None };
-    let model = gio::Menu::new();
-    let actions = gio::SimpleActionGroup::new();
-
-    // Quick panel: a player's now-playing and controls first.
-    let media = if item.running() { crate::mpris::panel(&item.key) } else { None };
-    if media.is_some() {
-        let section = gio::Menu::new();
-        let entry = gio::MenuItem::new(None, None);
-        entry.set_attribute_value("custom", Some(&"media".to_variant()));
-        section.append_item(&entry);
-        model.append_section(None, &section);
-    }
-
-    let first = gio::Menu::new();
-    if is_app {
-        // The app's own "new window" action stands in for ours.
-        let own_new = info.as_ref().is_some_and(|i| {
-            i.list_actions().iter().any(|a| matches!(a.as_str(), "new-window" | "new-empty-window" | "NewWindow"))
-        });
-        if !(item.running() && own_new) {
-            first.append(Some(if item.running() { "New window" } else { "Open" }), Some("dock.open"));
-        }
-        if let Some(info) = &info {
-            for a in info.list_actions() {
-                let label = info.action_name(&a);
-                let entry = gio::MenuItem::new(Some(&label), None);
-                entry.set_action_and_target_value(Some("dock.action"), Some(&a.to_variant()));
-                first.append_item(&entry);
-            }
-        }
-    }
-    model.append_section(None, &first);
-
-    let second = gio::Menu::new();
-    if is_app {
-        second.append(Some(if item.pinned { "Remove from dock" } else { "Keep in dock" }), Some("dock.pin"));
-    }
-    if item.running() && launch::switcher_installed() {
-        second.append(Some("Show windows"), Some("dock.windows"));
-    }
-    if item.running() {
-        second.append(Some(if item.windows.len() > 1 { "Close all windows" } else { "Quit" }), Some("dock.quit"));
-    }
-    model.append_section(None, &second);
-
-    let key = item.key.clone();
-    let running = item.running();
-    let open = gio::SimpleAction::new("open", None);
-    let k = key.clone();
-    open.connect_activate(move |_, _| if running { launch::new_instance(&k) } else { launch::launch(&k, None) });
-    actions.add_action(&open);
-
-    let action = gio::SimpleAction::new("action", Some(glib::VariantTy::STRING));
-    let k = key.clone();
-    action.connect_activate(move |_, p| {
-        if let Some(name) = p.and_then(|p| p.get::<String>()) {
-            launch::launch(&k, Some(&name));
-        }
+    let desktop = s.desktop.borrow().clone();
+    let windows = item
+        .windows
+        .iter()
+        .filter_map(|a| desktop.window(a))
+        .map(|w| (w.address.clone(), if w.title.is_empty() { w.class.clone() } else { w.title.clone() }))
+        .collect();
+    let wd = Rc::downgrade(d);
+    let opened = Box::new(move || {
+        let Some(d) = wd.upgrade() else { return };
+        d.holds.set(d.holds.get() + 1);
+        cancel_timer(&d);
+        // Keyboard for the card (Tab, Enter, Esc) only while it's open.
+        d.window.set_keyboard_mode(KeyboardMode::OnDemand);
     });
-    actions.add_action(&action);
-
-    let pin_action = gio::SimpleAction::new("pin", None);
-    let (ws, wd, k, pinned) = (Rc::downgrade(s), Rc::downgrade(d), key.clone(), item.pinned);
-    pin_action.connect_activate(move |_, _| {
-        let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
-        pin(&s, &d, &k, !pinned, None);
-    });
-    actions.add_action(&pin_action);
-
-    let show = gio::SimpleAction::new("windows", None);
-    let k = key.clone();
-    show.connect_activate(move |_, _| launch::show_windows(&k));
-    actions.add_action(&show);
-
-    let quit = gio::SimpleAction::new("quit", None);
-    let windows = item.windows.clone();
-    quit.connect_activate(move |_, _| windows.iter().for_each(|w| launch::close(w)));
-    actions.add_action(&quit);
-
-    tile.insert_action_group("dock", Some(&actions));
-    let pop = gtk::PopoverMenu::from_model(Some(&model));
-    if let Some(media) = &media {
-        pop.add_child(media, "media");
-    }
-    pop.set_parent(tile);
-    pop.set_position(popover_side(d.position));
-    pop.add_css_class("dock-menu");
-    d.holds.set(d.holds.get() + 1);
-    cancel_timer(d);
-    // Keyboard for the menu (arrows, Esc) only while it's open.
-    d.window.set_keyboard_mode(KeyboardMode::OnDemand);
     let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
-    pop.connect_closed(move |pop| {
-        let pop = pop.clone();
-        glib::idle_add_local_once(move || pop.unparent());
+    let closed = Box::new(move || {
         if let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) {
             d.window.set_keyboard_mode(KeyboardMode::None);
             hold(&s, &d, false);
         }
     });
-    pop.popup();
+    let (ws, wd, k) = (Rc::downgrade(s), Rc::downgrade(d), item.key.clone());
+    let pin_app = Box::new(move |on: bool| {
+        if let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) {
+            pin(&s, &d, &k, on, None);
+        }
+    });
+    let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+    let focus = Box::new(move |address: &str| {
+        let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
+        let desktop = s.desktop.borrow().clone();
+        let (Some(monitor), Some(w)) = (desktop.monitor(&d.connector), desktop.window(address)) else { return };
+        launch::focus(address, is_minimized(&desktop, w.workspace), monitor.active_workspace);
+    });
+    let host = crate::card::Host { side: popover_side(d.position), opened, closed, pin: pin_app, focus };
+    crate::card::show(tile, crate::card::App { key: item.key.clone(), pinned: item.pinned, windows }, host);
 }
 
 fn popover_side(position: Position) -> gtk::PositionType {

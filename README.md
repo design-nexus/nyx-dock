@@ -26,7 +26,9 @@ nyx-dock --disable   # stop it and turn Omarchy's dock back on
   they started; then your folders (Downloads by default) and the Trash.
 - The Apps button opens every app from the app menu in a grid above the dock. Type to
   search (Enter opens the first match), click an app to open it, right-click it to keep
-  it in the dock, or drag it onto the dock to pin it in that place.
+  it in the dock or uninstall it, or drag it onto the dock to pin it in that place.
+  Uninstall hands the app to Nyx Store, which shows it with its Remove button and
+  reviews the removal as usual; it's there when Nyx Store is installed.
 - Click an app to open it, or to bring its most recent window forward (the one on the
   workspace in front of you if it has one). Click it again to go through its other
   windows. Middle-click opens a new window.
@@ -36,10 +38,18 @@ nyx-dock --disable   # stop it and turn Omarchy's dock back on
   accent bar. Minimized windows come back to the workspace you're on.
 - Badges and progress from apps that use the Unity launcher API, and a warning-colored
   dot for a window asking for attention.
-- Right-click for the app's own actions (New Private Window, Compose, …), Keep in dock /
-  Remove from dock, Show windows (with Nyx Switcher: the app's windows in its overview),
-  and Quit or Close all windows. A player (Nyx Music, a browser
-  playing video, …) also shows what's playing with its controls.
+- Right-click an app for its card: what the app has for you, its windows (with more
+  than one), its own actions (New Private Window, Compose, …), Keep in Dock / Remove
+  from Dock, Show windows (with Nyx Switcher: the app's windows in its overview), and
+  Quit or Close all. A player (Nyx Music, a browser playing video, …) also shows what's
+  playing with its controls. What the card lists, read from what the apps already keep:
+  - Nyx Calendar: the next five events (from its agenda), each opening its day, with
+    Today and Agenda.
+  - Your file manager: your bookmarked folders, then the standard ones.
+  - Your browser: the bookmarks toolbar, or the sites you visit most without one
+    (Firefox, LibreWolf, Zen, Chromium, Chrome, Brave, Vivaldi, Edge).
+  - Nyx Music: its Recently played, Most played, Recently added, Radio and Podcasts.
+  - Any other app: the files it opened lately.
 - Drag an app along the dock to pin it in that place; the other icons move aside as it
   goes. Drop a pinned app or a folder outside the dock to remove it. Drop files on an
   app to open them with it, on a folder to copy them there, on the Trash to trash them.
@@ -51,9 +61,9 @@ nyx-dock --disable   # stop it and turn Omarchy's dock back on
 - Folders show their newest files stacked (or the folder icon: with the Umbra icon
   theme, the folder's own, such as Downloads, Games or Dropbox) with a count, and open
   as a fan, a grid, a list or in your file manager, sorted by date, name or kind:
-  right-click a folder to choose. Grids and lists show every file and scroll. Click a
-  file to open it, or drag it out to another app. Removing a folder from the dock never
-  touches the folder.
+  right-click a folder to choose, and to show or hide its count. Grids and lists show
+  every file and scroll. Click a file to open it, or drag it out to another app.
+  Removing a folder from the dock never touches the folder.
 - Trash shows when it has something in it, opens in your file manager, and empties from
   its menu after a second click.
 - Intelligent hiding: the dock hides while a window overlaps it or something is
@@ -98,6 +108,7 @@ hide_delay_ms = 600
 previews = true         # windows of a running app on hover
 preview_delay_ms = 350
 trash = true
+folder_counts = true    # item count badges on folders
 apps = true             # the Apps button
 app_names = true        # names under the icons in the Apps panel (false: icons only)
 pinned = ["io.github.design_nexus.nyx.Files", "firefox"]
@@ -107,6 +118,7 @@ path = "~/Downloads"
 look = "stack"          # stack | folder
 open = "grid"           # grid | fan | list | files
 sort = "date"           # date | name | kind
+count = false           # this folder's count badge (unset: folder_counts)
 
 # One screen: by its stable id (make|model|serial) or its connector name.
 [monitors."DP-2"]
@@ -130,8 +142,8 @@ make -C hyprland-plugin    # the swipe plugin (needs Hyprland's headers)
 
 `nyx-dock --only HEADLESS-1` shows the dock on one output only, and `NYX_DOCK_DEBUG=1`
 prints what it decides. For screenshots without a pointer, `NYX_DOCK_TEST_PREVIEW=<app>`,
-`NYX_DOCK_TEST_MENU=<app>`, `NYX_DOCK_TEST_FOLDER=1` (or `=menu`), `NYX_DOCK_TEST_APPS=1`
-and `NYX_DOCK_TEST_DOCK_MENU=1` open a preview, an app's menu, the first folder (or its
+`NYX_DOCK_TEST_CARD=<app>`, `NYX_DOCK_TEST_FOLDER=1` (or `=menu`), `NYX_DOCK_TEST_APPS=1`
+and `NYX_DOCK_TEST_DOCK_MENU=1` open a preview, an app's card, the first folder (or its
 menu), the Apps panel or the dock's menu at start; `NYX_DOCK_TEST_OFFSET=0.5` holds the
 bar that far through its slide out of sight. The service is `nyx-dock.service`
 (systemd user unit).

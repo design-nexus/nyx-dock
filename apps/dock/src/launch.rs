@@ -164,9 +164,29 @@ pub fn settings_installed() -> bool {
 
 /// Open Nyx Settings on its Dock page.
 pub fn dock_settings() {
-    let mut args: Vec<String> = if has("uwsm-app") { vec!["uwsm-app".into(), "--".into()] } else { Vec::new() };
-    args.extend(["nyx-settings".into(), "--section".into(), "dock".into()]);
-    spawn(&args);
+    command(&["nyx-settings", "--section", "dock"]);
+}
+
+/// Run a program the way apps start (through uwsm when there is one).
+pub fn command(args: &[&str]) {
+    let mut all: Vec<String> = if has("uwsm-app") { vec!["uwsm-app".into(), "--".into()] } else { Vec::new() };
+    all.extend(args.iter().map(|a| a.to_string()));
+    spawn(&all);
+}
+
+/// Whether a program is installed.
+pub fn installed(program: &str) -> bool {
+    has(program)
+}
+
+/// Whether Nyx Store is installed (it removes apps, after its own review).
+pub fn store_installed() -> bool {
+    has("nyx-store")
+}
+
+/// Show the app in Nyx Store, to remove it.
+pub fn uninstall(id: &str) {
+    command(&["nyx-store", "--remove", id]);
 }
 
 /// Empty the Trash.

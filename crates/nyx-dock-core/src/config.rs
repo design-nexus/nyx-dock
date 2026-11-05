@@ -8,6 +8,7 @@
 //! pinned = ["io.github.design_nexus.nyx.Files", "firefox"]
 //! apps = true             # the Apps button first
 //! app_names = true        # names under the icons in the Apps panel
+//! folder_counts = true    # item count badges on folders (a folder's `count` overrides)
 //! window_controls = false # hover buttons on floating windows
 //!
 //! [monitors."Samsung Display Corp.|ATNA60DL01-0|"]   # a monitor's stable id, or its connector
@@ -105,15 +106,30 @@ pub struct Folder {
     /// An icon name to show instead (with `look = "folder"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// The item count badge for this folder; unset follows `folder_counts`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<bool>,
 }
 
 impl Default for Folder {
     fn default() -> Self {
-        Folder { path: "~/Downloads".into(), look: FolderLook::Stack, open: FolderOpen::Grid, sort: Sort::Date, icon: None }
+        Folder {
+            path: "~/Downloads".into(),
+            look: FolderLook::Stack,
+            open: FolderOpen::Grid,
+            sort: Sort::Date,
+            icon: None,
+            count: None,
+        }
     }
 }
 
 impl Folder {
+    /// Whether its tile shows the item count, given the dock-wide setting.
+    pub fn shows_count(&self, default: bool) -> bool {
+        self.count.unwrap_or(default)
+    }
+
     pub fn expanded(&self, home: &Path) -> PathBuf {
         match self.path.strip_prefix("~/") {
             Some(rest) => home.join(rest),
@@ -151,6 +167,8 @@ pub struct Config {
     pub folders: Vec<Folder>,
     /// The Trash at the end.
     pub trash: bool,
+    /// A badge with how many items each folder holds (a folder can override it).
+    pub folder_counts: bool,
     /// The Apps button first, which opens every app in a grid.
     pub apps: bool,
     /// Names under the icons in the Apps panel (off: icons only).
@@ -175,6 +193,7 @@ impl Default for Config {
             pinned: Vec::new(),
             folders: vec![Folder::default()],
             trash: true,
+            folder_counts: true,
             apps: true,
             app_names: true,
             window_controls: false,
@@ -404,6 +423,22 @@ running = "monitor"
         assert_eq!(c.folders[0].expanded(Path::new("/home/k")), PathBuf::from("/home/k/Projects"));
         let none: Config = toml::from_str("folders = []").unwrap();
         assert!(none.folders.is_empty(), "an empty list means no folders");
+    }
+
+    #[test]
+    fn folder_counts() {
+        let c = Config::default();
+        assert!(c.folder_counts, "counts by default");
+        assert!(c.folders[0].shows_count(c.folder_counts));
+        let c: Config = toml::from_str(
+            "folder_counts = false\n[[folders]]\npath = \"~/Downloads\"\n[[folders]]\npath = \"~/Projects\"\ncount = true",
+        )
+        .unwrap();
+        assert!(!c.folders[0].shows_count(c.folder_counts), "follows the dock");
+        assert!(c.folders[1].shows_count(c.folder_counts), "its own setting wins");
+        let again: Config = toml::from_str(&c.to_toml()).unwrap();
+        assert_eq!(c, again);
+        assert!(!Config::default().to_toml().contains("count ="), "an unset override isn't written");
     }
 
     #[test]

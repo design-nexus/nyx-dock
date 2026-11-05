@@ -1,6 +1,7 @@
 //! The Apps button, first in the dock: every app from the app menu in a grid that
 //! rises from the dock, with a search field. Click an app to open it, right-click to
-//! keep it in the dock, or drag it onto the dock to pin it there.
+//! keep it in the dock or uninstall it (through Nyx Store), or drag it onto the dock
+//! to pin it there.
 
 use crate::dock::DockDrag;
 use crate::launch;
@@ -271,14 +272,26 @@ fn cell_menu(cell: &gtk::Box, id: &str, host: Rc<Host>, close: impl Fn() + Clone
     let model = gio::Menu::new();
     model.append(Some("Open"), Some("app.open"));
     model.append(Some(if pinned { "Remove from Dock" } else { "Keep in Dock" }), Some("app.pin"));
+    if launch::store_installed() {
+        let section = gio::Menu::new();
+        section.append(Some("Uninstall…"), Some("app.uninstall"));
+        model.append_section(None, &section);
+    }
     let actions = gio::SimpleActionGroup::new();
     let open = gio::SimpleAction::new("open", None);
-    let (i, c) = (id.to_string(), close);
+    let (i, c) = (id.to_string(), close.clone());
     open.connect_activate(move |_, _| {
         launch::launch(&i, None);
         c();
     });
     actions.add_action(&open);
+    let uninstall = gio::SimpleAction::new("uninstall", None);
+    let (i, c) = (id.to_string(), close);
+    uninstall.connect_activate(move |_, _| {
+        c();
+        launch::uninstall(&i);
+    });
+    actions.add_action(&uninstall);
     let pin = gio::SimpleAction::new("pin", None);
     let i = id.to_string();
     pin.connect_activate(move |_, _| (host.set_pinned)(&i, !pinned));

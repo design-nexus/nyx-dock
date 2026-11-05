@@ -7,6 +7,7 @@
 
 mod apps;
 mod badges;
+mod card;
 mod controls;
 mod dock;
 mod handover;

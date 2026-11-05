@@ -27,6 +27,8 @@ pub struct Host {
     pub icon_size: i32,
     /// The tallest a folder view grows before it scrolls.
     pub max_height: i32,
+    /// The dock-wide item count setting, for folders that don't set their own.
+    pub folder_counts: bool,
 }
 
 /// Change a folder's settings: saved, and its tile redrawn.
@@ -250,7 +252,7 @@ async fn thumbnail(file: &gio::File) -> Option<gdk::Texture> {
     }
     Some(gdk::Texture::for_pixbuf(&pixbuf))
 }
-fn age(modified: i64) -> String {
+pub fn age(modified: i64) -> String {
     let Ok(now) = glib::DateTime::now_local() else { return String::new() };
     let Ok(then) = glib::DateTime::from_unix_local(modified) else { return String::new() };
     let today = now.ymd();
@@ -306,7 +308,7 @@ pub fn folder_tile(folder: &Folder, host: Rc<Host>) -> gtk::Widget {
             } else {
                 face.set_child(Some(&folder_face(folder.icon.as_deref(), &dir, size)));
             }
-            if !items.is_empty() {
+            if !items.is_empty() && folder.shows_count(host.folder_counts) {
                 let count = gtk::Label::new(Some(&if items.len() > 99 { "99+".into() } else { items.len().to_string() }));
                 count.add_css_class("stack-count");
                 count.set_halign(gtk::Align::End);
@@ -590,6 +592,9 @@ fn folder_menu(tile: &gtk::Box, uri: &str, folder: &Folder, set: SetFolder, host
     choices(&model, "Sort by", "sort", &[("Date Added", "date"), ("Name", "name"), ("Kind", "kind")]);
     choices(&model, "Display as", "look", &[("Stack", "stack"), ("Folder", "folder")]);
     choices(&model, "View content as", "open", &[("Fan", "fan"), ("Grid", "grid"), ("List", "list"), ("Files", "files")]);
+    let badge = gio::Menu::new();
+    badge.append(Some("Show item count"), Some("folder.count"));
+    model.append_section(None, &badge);
     let last = gio::Menu::new();
     last.append(Some("Open in Files"), Some("folder.open-files"));
     last.append(Some("Remove from Dock"), Some("folder.remove"));
@@ -606,7 +611,7 @@ fn folder_menu(tile: &gtk::Box, uri: &str, folder: &Folder, set: SetFolder, host
     actions.add_action(&choice_action("look", look_name(folder.look), set.clone(), |f, v| {
         f.look = if v == "folder" { FolderLook::Folder } else { FolderLook::Stack }
     }));
-    actions.add_action(&choice_action("open", open_name(folder.open), set, |f, v| {
+    actions.add_action(&choice_action("open", open_name(folder.open), set.clone(), |f, v| {
         f.open = match v {
             "fan" => FolderOpen::Fan,
             "list" => FolderOpen::List,
@@ -614,6 +619,13 @@ fn folder_menu(tile: &gtk::Box, uri: &str, folder: &Folder, set: SetFolder, host
             _ => FolderOpen::Grid,
         }
     }));
+    let count = gio::SimpleAction::new_stateful("count", None, &folder.shows_count(host.folder_counts).to_variant());
+    count.connect_activate(move |a, _| {
+        let on = !a.state().and_then(|s| s.get::<bool>()).unwrap_or(true);
+        a.set_state(&on.to_variant());
+        set(&|f| f.count = Some(on));
+    });
+    actions.add_action(&count);
     let open = gio::SimpleAction::new("open-files", None);
     let uri = uri.to_string();
     open.connect_activate(move |_, _| launch::open_default(&uri));
