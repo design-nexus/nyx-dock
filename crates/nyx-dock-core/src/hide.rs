@@ -60,14 +60,26 @@ pub struct Rect {
 /// space a dock kept is given back, Hyprland lays them out again without an event, and
 /// their last known size still stops short of the dock.
 pub fn should_hide(mode: Hide, desktop: &Desktop, monitor: &Monitor, dock: Rect, edge: Position) -> bool {
+    should_hide_on(mode, desktop, monitor, monitor.active_workspace, dock, edge)
+}
+
+/// As [`should_hide`], with `workspace` in front on `monitor`: where a swipe is going
+/// before it gets there.
+pub fn should_hide_on(mode: Hide, desktop: &Desktop, monitor: &Monitor, workspace: i64, dock: Rect, edge: Position) -> bool {
     match mode {
         Hide::Never => false,
         Hide::Always => true,
         Hide::Smart => {
-            let fullscreen = desktop.workspaces.iter().any(|w| w.id == monitor.active_workspace && w.has_fullscreen);
+            let fullscreen = desktop.workspaces.iter().any(|w| w.id == workspace && w.has_fullscreen);
             let (dx, dy) = (monitor.x + dock.x, monitor.y + dock.y);
+            let mut shown = desktop.windows.iter().filter(|w| {
+                !w.hidden
+                    && (w.workspace == workspace
+                        || Some(w.workspace) == monitor.special_workspace
+                        || (w.pinned && w.monitor == monitor.id))
+            });
             fullscreen
-                || desktop.visible_windows(monitor).any(|w| {
+                || shown.any(|w| {
                     if w.fullscreen != 0 {
                         return true;
                     }
@@ -162,6 +174,18 @@ mod tests {
     fn only_the_workspace_on_screen_counts() {
         let d = desktop(vec![win(2, [10, 36], [1900, 1034])]);
         assert!(!should_hide(Hide::Smart, &d, &d.monitors[0], DOCK, Position::Bottom));
+    }
+
+    #[test]
+    fn asks_about_another_workspace() {
+        let d = desktop(vec![win(2, [10, 36], [1900, 1034])]);
+        assert!(should_hide_on(Hide::Smart, &d, &d.monitors[0], 2, DOCK, Position::Bottom));
+        assert!(!should_hide_on(Hide::Smart, &d, &d.monitors[0], 3, DOCK, Position::Bottom));
+        // A fullscreen window on the workspace a swipe is heading to.
+        let mut full = win(4, [0, 0], [1920, 1080]);
+        full.fullscreen = 2;
+        let d = desktop(vec![full]);
+        assert!(should_hide_on(Hide::Smart, &d, &d.monitors[0], 4, DOCK, Position::Bottom));
     }
 
     #[test]

@@ -3,14 +3,16 @@
 
 use crate::badges::{self, Badge};
 use crate::launch;
+use crate::slide::Slide;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use nyx_desktop::apps::Index;
 use nyx_desktop::{Desktop, Monitor, watch};
 use nyx_dock_core::config::{Config, Effective, Hide, Position, first_pins};
-use nyx_dock_core::hide::{Rect, clear_of_dock, mode_here, should_hide};
+use nyx_dock_core::hide::{Rect, clear_of_dock, mode_here, should_hide, should_hide_on};
 use nyx_dock_core::items::{self, Item, MINIMIZED};
+use nyx_dock_core::swipe::{SwipeEvent, resolve_loop};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -38,6 +40,13 @@ pub fn debug(msg: impl FnOnce() -> String) {
 pub fn testing() -> bool {
     thread_local!(static ON: bool = std::env::vars_os().any(|(k, _)| k.to_string_lossy().starts_with("NYX_DOCK_TEST_")));
     ON.with(|on| *on)
+}
+
+/// A screenshot run of the slide (`NYX_DOCK_TEST_OFFSET=0.5`): the bar held that far out
+/// of sight, whatever the windows want.
+fn test_offset() -> Option<f64> {
+    thread_local!(static OFFSET: Option<f64> = std::env::var("NYX_DOCK_TEST_OFFSET").ok().and_then(|v| v.parse().ok()));
+    OFFSET.with(|o| *o)
 }
 
 struct Shared {
@@ -97,6 +106,19 @@ struct Dock {
     /// size), and isn't asked again until it moves.
     fitted: RefCell<Fitted>,
     fitting: Cell<bool>,
+    /// Moves the bar out of sight and back.
+    slide: Slide,
+    /// The workspace (and special workspace) the dock last decided for: a new one
+    /// hides it at once, without the hiding delay.
+    settled_ws: Cell<(i64, Option<i64>)>,
+    /// A swipe on this monitor, followed from the plugin: where it started and whether
+    /// the dock was hidden then.
+    swipe: Cell<Option<(i64, bool)>>,
+    swipe_watchdog: RefCell<Option<glib::SourceId>>,
+    /// Coming back once things settle (a workspace jumped through, events still
+    /// arriving), then checked against Hyprland.
+    settle_timer: RefCell<Option<glib::SourceId>>,
+    settle_gen: Cell<u32>,
 }
 
 impl Dock {
@@ -152,6 +174,11 @@ pub fn start(app: &gtk::Application, only: Option<String>) {
         let Some(s) = ws.upgrade() else { return };
         debug(|| format!("update {:?} connected {}", u.changes, u.desktop.connected));
         *s.desktop.borrow_mut() = u.desktop.clone();
+        // Connected, or the config reloaded.
+        // Not from a copy tried on a test output.
+        if u.changes == nyx_desktop::model::Changes::ALL && u.desktop.connected && s.only.is_none() {
+            crate::swipe::ensure_loaded();
+        }
         update_controls(&s);
         if u.changes.monitors || s.docks.borrow().is_empty() {
             rebuild_docks(&s, false);
@@ -163,6 +190,13 @@ pub fn start(app: &gtk::Application, only: Option<String>) {
             }
         }
     }));
+
+    let ws = Rc::downgrade(&s);
+    crate::swipe::listen(move |event| {
+        if let Some(s) = ws.upgrade() {
+            follow_swipe(&s, &event);
+        }
+    });
 
     // Apps installed or removed: match windows again.
     let ws = Rc::downgrade(&s);
@@ -363,7 +397,7 @@ fn rebuild_docks(s: &Rc<Shared>, refill: bool) {
         docks.push(new_dock(s, &m.name, gmon, eff, was));
     }
     for d in old.iter().filter(|d| !docks.iter().any(|k| Rc::ptr_eq(k, d))) {
-        for timer in [&d.timer, &d.fit_timer] {
+        for timer in [&d.timer, &d.fit_timer, &d.swipe_watchdog, &d.settle_timer] {
             if let Some(t) = timer.borrow_mut().take() {
                 t.remove();
             }
@@ -412,7 +446,6 @@ fn new_dock(s: &Rc<Shared>, connector: &str, gmon: &gdk::Monitor, eff: Effective
 
     let bar = gtk::Box::new(orientation, 6);
     bar.add_css_class("dock-bar");
-    window.set_child(Some(&bar));
     let horizontal = orientation == gtk::Orientation::Horizontal;
 
     // The strip at the screen edge that brings a hidden dock back.
@@ -437,6 +470,8 @@ fn new_dock(s: &Rc<Shared>, connector: &str, gmon: &gdk::Monitor, eff: Effective
     size_edge(&strip, horizontal, if was_along >= 96 { was_along } else { half.max(48) });
 
     let start_hidden = eff.hide == Hide::Always || (was_hidden && eff.hide != Hide::Never);
+    let slide = Slide::new(&bar, eff.position, start_hidden);
+    window.set_child(Some(&slide));
     let dock = Rc::new(Dock {
         connector: connector.to_string(),
         gmon: gmon.clone(),
@@ -463,6 +498,12 @@ fn new_dock(s: &Rc<Shared>, connector: &str, gmon: &gdk::Monitor, eff: Effective
         checking_pointer: Cell::new(false),
         fitted: RefCell::default(),
         fitting: Cell::new(false),
+        slide,
+        settled_ws: Cell::new((0, None)),
+        swipe: Cell::new(None),
+        swipe_watchdog: RefCell::default(),
+        settle_timer: RefCell::default(),
+        settle_gen: Cell::new(0),
     });
 
     let motion = gtk::EventControllerMotion::new();
@@ -833,9 +874,12 @@ fn fit_input(d: &Dock) {
     if w > 0 && h > 0 {
         d.size.set((w, h));
     }
-    let (Some(surface), Some(b)) = (d.window.surface(), d.bar.compute_bounds(&d.window)) else { return };
+    let (Some(surface), Some(b)) = (d.window.surface(), bar_bounds(d)) else { return };
     let r = gtk::cairo::RectangleInt::new(b.x() as i32, b.y() as i32, b.width().ceil() as i32, b.height().ceil() as i32);
-    surface.set_input_region(Some(&gtk::cairo::Region::create_rectangle(&r)));
+    // Clicks go through to the windows below while the bar is away or on the move.
+    let away = d.hidden.get() || d.swipe.get().is_some() || d.slide.offset() > 0.0;
+    let region = if away { gtk::cairo::Region::create() } else { gtk::cairo::Region::create_rectangle(&r) };
+    surface.set_input_region(Some(&region));
     // The edge strip is as wide (or tall) as the dock, once the dock has been laid out
     // (a dock hidden before its first frame reports a few pixels).
     let horizontal = matches!(d.position, Position::Bottom | Position::Top);
@@ -1982,7 +2026,7 @@ fn dock_rect(d: &Dock) -> Rect {
         Position::Left => (0, (geo.height() - h) / 2),
         Position::Right => (geo.width() - w, (geo.height() - h) / 2),
     };
-    match d.bar.compute_bounds(&d.window) {
+    match bar_bounds(d) {
         Some(b) if b.width() > 0.0 => {
             Rect { x: ox + b.x() as i32, y: oy + b.y() as i32, w: b.width().ceil() as i32, h: b.height().ceil() as i32 }
         }
@@ -1990,25 +2034,58 @@ fn dock_rect(d: &Dock) -> Rect {
     }
 }
 
+/// The bar's place in the window when it's up, wherever the slide has it now.
+fn bar_bounds(d: &Dock) -> Option<gtk::graphene::Rect> {
+    let b = d.bar.compute_bounds(&d.window)?;
+    let (dx, dy) = d.slide.translation();
+    Some(gtk::graphene::Rect::new(b.x() - dx as f32, b.y() - dy as f32, b.width(), b.height()))
+}
+
 /// Whether the workspace in front on `monitor` is in Omarchy's floating mode.
 fn floating_here(desktop: &Desktop, monitor: &Monitor) -> bool {
-    let layout = desktop.workspaces.iter().find(|w| w.id == monitor.active_workspace).map_or("", |w| w.tiled_layout.as_str());
-    nyx_desktop::omarchy::workspace_mode(monitor.active_workspace, layout) == nyx_desktop::omarchy::Mode::Floating
+    floating_on(desktop, monitor.active_workspace)
+}
+
+fn floating_on(desktop: &Desktop, workspace: i64) -> bool {
+    let layout = desktop.workspaces.iter().find(|w| w.id == workspace).map_or("", |w| w.tiled_layout.as_str());
+    nyx_desktop::omarchy::workspace_mode(workspace, layout) == nyx_desktop::omarchy::Mode::Floating
 }
 
 /// The hiding that applies on the workspace in front.
 fn hide_here(d: &Dock, desktop: &Desktop, monitor: &Monitor) -> Hide {
+    hide_on(d, desktop, monitor.active_workspace)
+}
+
+/// The hiding that applies on `workspace`.
+fn hide_on(d: &Dock, desktop: &Desktop, workspace: i64) -> Hide {
     let mode = d.eff().hide;
     if mode != Hide::Never {
         return mode;
     }
-    mode_here(mode, floating_here(desktop, monitor))
+    mode_here(mode, floating_on(desktop, workspace))
 }
+
+/// How long the bar takes to slide out of sight, and back.
+const HIDE_MS: u32 = 180;
+const SHOW_MS: u32 = 200;
+/// The rest of a swipe's slide, once the fingers lift.
+const SWIPE_SETTLE_MS: u32 = 120;
+/// How long a workspace has to stay in front before the dock comes back for it: Nyx
+/// Settings' wrap-around jumps on from a placeholder after 30 ms.
+const SETTLE_MS: u64 = 120;
 
 fn evaluate(s: &Rc<Shared>, d: &Rc<Dock>) {
     let desktop = s.desktop.borrow().clone();
     let Some(monitor): Option<&Monitor> = desktop.monitor(&d.connector) else { return };
     let mode = hide_here(d, &desktop, monitor);
+    if let Some(offset) = test_offset() {
+        d.slide.set_offset(offset);
+        return;
+    }
+    // A swipe is moving the dock; it decides once it ends.
+    if d.swipe.get().is_some() {
+        return;
+    }
     // Give the space back before looking: tiles laid out around it don't reach the dock.
     if mode != Hide::Never {
         reserve(d, false);
@@ -2017,25 +2094,185 @@ fn evaluate(s: &Rc<Shared>, d: &Rc<Dock>) {
     if windows_want && held_without_reason(d) {
         check_stale(s, d);
     }
+    let here = (monitor.active_workspace, monitor.special_workspace);
+    let switched = d.settled_ws.replace(here) != here;
     debug(|| {
         format!(
-            "{}: rect {:?}, {mode:?}, windows want it hidden: {windows_want}, hidden {}",
+            "{}: rect {:?}, {mode:?}, windows want it hidden: {windows_want}, hidden {}, workspace {here:?}{}",
             d.connector,
             dock_rect(d),
-            d.hidden.get()
+            d.hidden.get(),
+            if switched { " (new)" } else { "" }
         )
     });
     if windows_want && !d.hover.get() && d.holds.get() == 0 {
-        if !d.hidden.get() && d.timer.borrow().is_none() {
-            schedule_hide(s, d, s.config.borrow().hide_delay_ms as u64);
+        cancel_settle(d);
+        if !d.hidden.get() {
+            if switched {
+                // Out of the way before the new workspace's windows are under it.
+                cancel_timer(d);
+                conceal(d, HIDE_MS);
+            } else if d.timer.borrow().is_none() {
+                schedule_hide(s, d, s.config.borrow().hide_delay_ms as u64);
+            }
         }
     } else {
         cancel_timer(d);
-        if !windows_want {
-            show(d);
+        if !windows_want && d.hidden.get() {
+            schedule_settled_show(s, d);
         }
     }
     reserve(d, mode == Hide::Never);
+}
+
+/// Bring the dock back once the workspace has stayed in front for [`SETTLE_MS`] and
+/// Hyprland, asked afresh, agrees nothing is in the way: a workspace jumped through or
+/// an update caught half-way doesn't flash it up.
+fn schedule_settled_show(s: &Rc<Shared>, d: &Rc<Dock>) {
+    if d.settle_timer.borrow().is_some() {
+        return;
+    }
+    let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+    let generation = d.settle_gen.get();
+    let id = glib::timeout_add_local_once(Duration::from_millis(SETTLE_MS), move || {
+        let Some(d) = wd.upgrade() else { return };
+        d.settle_timer.borrow_mut().take();
+        if d.settle_gen.get() != generation {
+            return;
+        }
+        let (connector, rect, position) = (d.connector.clone(), dock_rect(&d), d.position);
+        glib::MainContext::default().spawn_local(async move {
+            let fresh = gio::spawn_blocking(|| {
+                let hypr = nyx_desktop::hypr::Instance::find().ok()?;
+                Desktop::snapshot(&hypr).ok()
+            })
+            .await
+            .ok()
+            .flatten();
+            let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) else { return };
+            if d.settle_gen.get() != generation || d.swipe.get().is_some() || !d.hidden.get() {
+                return;
+            }
+            let desktop = fresh.map(Arc::new).unwrap_or_else(|| s.desktop.borrow().clone());
+            let Some(monitor) = desktop.monitor(&connector) else { return };
+            let mode = hide_here(&d, &desktop, monitor);
+            if should_hide(mode, &desktop, monitor, rect, position) {
+                debug(|| format!("{connector}: stays hidden (Hyprland has a window there)"));
+                return;
+            }
+            show(&d);
+            reserve(&d, mode == Hide::Never);
+        });
+    });
+    *d.settle_timer.borrow_mut() = Some(id);
+}
+
+fn cancel_settle(d: &Dock) {
+    d.settle_gen.set(d.settle_gen.get().wrapping_add(1));
+    if let Some(t) = d.settle_timer.borrow_mut().take() {
+        t.remove();
+    }
+}
+
+/// Slide the dock out of sight, then unmap it.
+fn conceal(d: &Rc<Dock>, ms: u32) {
+    d.hidden.set(true);
+    fit_input(d);
+    reserve(d, false);
+    let wd = Rc::downgrade(d);
+    d.slide.animate_to(1.0, ms, move || {
+        if let Some(d) = wd.upgrade()
+            && d.hidden.get()
+        {
+            d.window.set_visible(false);
+        }
+    });
+}
+
+/// Slide the dock back up.
+fn reveal(d: &Rc<Dock>, ms: u32) {
+    d.hidden.set(false);
+    d.window.set_visible(true);
+    let wd = Rc::downgrade(d);
+    d.slide.animate_to(0.0, ms, move || {
+        if let Some(d) = wd.upgrade() {
+            fit_input(&d);
+        }
+    });
+}
+
+/// A swipe reported by the plugin: the dock moves with it on its monitor.
+fn follow_swipe(s: &Rc<Shared>, event: &SwipeEvent) {
+    if test_offset().is_some() {
+        return;
+    }
+    let desktop = s.desktop.borrow().clone();
+    for d in s.docks.borrow().clone() {
+        match event {
+            SwipeEvent::Moving { monitor, from, to, progress } if *monitor == d.connector => {
+                if d.swipe.get().is_none() && (d.hover.get() || d.holds.get() > 0) {
+                    continue;
+                }
+                let Some(m) = desktop.monitor(&d.connector) else { continue };
+                let (start, was_hidden) = d.swipe.get().unwrap_or((*from, d.hidden.get()));
+                if d.swipe.get().is_none() {
+                    debug(|| format!("{}: swipe from {from} (hidden {was_hidden})", d.connector));
+                    d.swipe.set(Some((start, was_hidden)));
+                    cancel_timer(&d);
+                    cancel_settle(&d);
+                    fit_input(&d);
+                }
+                let to = resolve_loop(&desktop, monitor, start, *to);
+                let rect = dock_rect(&d);
+                let to_hidden = should_hide_on(hide_on(&d, &desktop, to), &desktop, m, to, rect, d.position);
+                let offset = nyx_dock_core::swipe::offset(was_hidden, to_hidden, *progress);
+                if offset < 1.0 && !d.window.is_visible() {
+                    d.window.set_visible(true);
+                }
+                d.slide.set_offset(offset);
+                watch_swipe(s, &d);
+            }
+            SwipeEvent::Done { monitor, active } if *monitor == d.connector => end_swipe(s, &d, Some(*active)),
+            _ => {}
+        }
+    }
+}
+
+/// A swipe whose end never comes (the plugin went away) ends on its own.
+fn watch_swipe(s: &Rc<Shared>, d: &Rc<Dock>) {
+    if let Some(t) = d.swipe_watchdog.borrow_mut().take() {
+        t.remove();
+    }
+    let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(d));
+    let id = glib::timeout_add_local_once(Duration::from_millis(1500), move || {
+        if let (Some(s), Some(d)) = (ws.upgrade(), wd.upgrade()) {
+            d.swipe_watchdog.borrow_mut().take();
+            end_swipe(&s, &d, None);
+        }
+    });
+    *d.swipe_watchdog.borrow_mut() = Some(id);
+}
+
+/// The swipe is over with `active` in front (or what the dock last heard): the dock
+/// finishes its slide to where that workspace wants it.
+fn end_swipe(s: &Rc<Shared>, d: &Rc<Dock>, active: Option<i64>) {
+    let Some((start, _)) = d.swipe.take() else { return };
+    if let Some(t) = d.swipe_watchdog.borrow_mut().take() {
+        t.remove();
+    }
+    let desktop = s.desktop.borrow().clone();
+    let Some(m) = desktop.monitor(&d.connector) else { return };
+    let landed = resolve_loop(&desktop, &d.connector, start, active.unwrap_or(m.active_workspace));
+    let mode = hide_on(d, &desktop, landed);
+    let hide = should_hide_on(mode, &desktop, m, landed, dock_rect(d), d.position) && !d.hover.get() && d.holds.get() == 0;
+    debug(|| format!("{}: swipe ended on {landed}: hidden {hide}", d.connector));
+    d.settled_ws.set((landed, m.special_workspace));
+    if hide {
+        conceal(d, SWIPE_SETTLE_MS);
+    } else {
+        reveal(d, SWIPE_SETTLE_MS);
+        reserve(d, mode == Hide::Never);
+    }
 }
 
 /// A popover open on the dock: a menu, a preview, a folder or the Apps panel.
@@ -2120,7 +2357,7 @@ fn pointer_on(d: &Dock, monitor: &Monitor, x: i32, y: i32) -> bool {
 /// A dock that stays up keeps its space, as on macOS: maximized and new windows stay
 /// above it.
 fn reserve(d: &Dock, on: bool) {
-    let bounds = d.bar.compute_bounds(&d.window).filter(|b| b.width() > 0.0);
+    let bounds = bar_bounds(d).filter(|b| b.width() > 0.0);
     let zone = match bounds {
         Some(b) if on && !d.hidden.get() => match d.position {
             Position::Bottom => d.window.height() - b.y() as i32,
@@ -2232,10 +2469,12 @@ fn schedule_hide(s: &Rc<Shared>, d: &Rc<Dock>, ms: u64) {
         let desktop = s.desktop.borrow().clone();
         let Some(monitor) = desktop.monitor(&d.connector) else { return };
         let mode = hide_here(&d, &desktop, monitor);
-        if should_hide(mode, &desktop, monitor, dock_rect(&d), d.position) && !d.hover.get() && d.holds.get() == 0 {
-            d.hidden.set(true);
-            d.window.set_visible(false);
-            reserve(&d, false);
+        if d.swipe.get().is_none()
+            && should_hide(mode, &desktop, monitor, dock_rect(&d), d.position)
+            && !d.hover.get()
+            && d.holds.get() == 0
+        {
+            conceal(&d, HIDE_MS);
         }
     });
     *d.timer.borrow_mut() = Some(id);
@@ -2247,8 +2486,9 @@ fn cancel_timer(d: &Dock) {
     }
 }
 
-fn show(d: &Dock) {
-    if d.hidden.replace(false) {
-        d.window.set_visible(true);
+fn show(d: &Rc<Dock>) {
+    cancel_settle(d);
+    if d.hidden.get() || d.slide.target() > 0.0 {
+        reveal(d, SHOW_MS);
     }
 }

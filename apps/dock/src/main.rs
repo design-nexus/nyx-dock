@@ -12,7 +12,9 @@ mod dock;
 mod handover;
 mod launch;
 mod mpris;
+mod slide;
 mod stacks;
+mod swipe;
 mod theme;
 
 use gtk::prelude::*;

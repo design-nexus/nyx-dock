@@ -55,6 +55,22 @@ install -m 755 "$target/nyx-dock" "$bin/nyx-dock.new" && mv -f "$bin/nyx-dock.ne
 install -m 644 "$src/apps/dock/data/nyx-dock.service" "$units/nyx-dock.service"
 systemctl --user daemon-reload 2>/dev/null || true
 
+# The Hyprland plugin that lets the dock slide with a workspace swipe. It's built
+# against this Hyprland, so run this again after Hyprland updates.
+plugins="$HOME/.local/lib/nyx-dock"
+if pkg-config --exists hyprland 2>/dev/null && command -v g++ >/dev/null; then
+  say "Building the swipe plugin for Hyprland $(pkg-config --modversion hyprland)"
+  if make -s -C "$src/hyprland-plugin" clean all; then
+    mkdir -p "$plugins"
+    install -m 755 "$src/hyprland-plugin/nyx-dock-swipe.so" "$plugins/nyx-dock-swipe.so.new"
+    mv -f "$plugins/nyx-dock-swipe.so.new" "$plugins/nyx-dock-swipe.so"
+  else
+    warn "The swipe plugin didn't build; the dock still hides, once a swipe ends."
+  fi
+else
+  warn "Hyprland's headers weren't found, so the dock won't slide with workspace swipes."
+fi
+
 if systemctl --user is-active --quiet nyx-dock.service 2>/dev/null; then
   say "Installed. The running dock uses the new build after: systemctl --user restart nyx-dock"
 else

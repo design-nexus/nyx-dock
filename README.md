@@ -58,7 +58,10 @@ nyx-dock --disable   # stop it and turn Omarchy's dock back on
   its menu after a second click.
 - Intelligent hiding: the dock hides while a window overlaps it or something is
   fullscreen, and comes back when the pointer reaches the screen edge. It stays up while
-  a menu, preview or drag is open.
+  a menu, preview or drag is open. It slides out of sight and back, at once when you
+  switch to a workspace whose windows are in its way, and follows a trackpad swipe as
+  it goes: out before the windows coming in reach it, back once the ones leaving have
+  passed. Between two workspaces that both hide it, it stays hidden.
 - Hide set to Never keeps the dock up on floating workspaces and keeps its space, as on
   macOS: maximized windows stop above it, and a floating window that reaches behind it
   moves up (or gets smaller) when windows open or you switch workspaces. On tiling and
@@ -73,6 +76,13 @@ without one get one made and saved there.
 
 Apps start the way Omarchy starts them (`uwsm-app -- gtk-launch`), each in its own scope,
 so restarting the dock never closes them.
+
+Hyprland doesn't tell other programs how far a swipe has gone, so `install.sh` also
+builds a small Hyprland plugin (`hyprland-plugin/`, installed as
+`~/.local/lib/nyx-dock/nyx-dock-swipe.so`) that only reads where the workspaces are
+drawn and reports it. The dock loads it, and loads it again after Hyprland reloads its
+config. It's built against the Hyprland on your machine: after a Hyprland update, run
+`./install.sh` again. Without it the dock still hides and comes back, once a swipe ends.
 
 ## Settings
 
@@ -115,13 +125,15 @@ Headless (virtual) outputs get no dock unless a `[monitors]` section turns one o
 ```sh
 cargo build --release --locked -p nyx-dock
 cargo test --locked --workspace
+make -C hyprland-plugin    # the swipe plugin (needs Hyprland's headers)
 ```
 
 `nyx-dock --only HEADLESS-1` shows the dock on one output only, and `NYX_DOCK_DEBUG=1`
 prints what it decides. For screenshots without a pointer, `NYX_DOCK_TEST_PREVIEW=<app>`,
 `NYX_DOCK_TEST_MENU=<app>`, `NYX_DOCK_TEST_FOLDER=1` (or `=menu`), `NYX_DOCK_TEST_APPS=1`
 and `NYX_DOCK_TEST_DOCK_MENU=1` open a preview, an app's menu, the first folder (or its
-menu), the Apps panel or the dock's menu at start. The service is `nyx-dock.service`
+menu), the Apps panel or the dock's menu at start; `NYX_DOCK_TEST_OFFSET=0.5` holds the
+bar that far through its slide out of sight. The service is `nyx-dock.service`
 (systemd user unit).
 
 ## Remove
