@@ -20,6 +20,15 @@ nyx-dock --disable   # stop it and turn Omarchy's dock back on
 `--enable` and `--disable` use Omarchy's own `omarchy-plugin-disable` and
 `omarchy-plugin-enable`, so nothing of Omarchy's is edited by hand.
 
+The dock is drawn in Quickshell (the shared Nyx runtime, `nyx-shell-qs`, with the dock's
+services in `nyx-dock-backend`); the earlier GTK dock is still there for now:
+
+```sh
+nyx-dock --ui gtk    # back to the GTK dock
+nyx-dock --ui qml    # the Quickshell dock (the default)
+nyx-dock --ui        # which one is on
+```
+
 ## What it does
 
 - The Apps button first, then pinned apps, then the apps that are running, in the order
@@ -135,7 +144,7 @@ Headless (virtual) outputs get no dock unless a `[monitors]` section turns one o
 ## Build
 
 ```sh
-cargo build --release --locked -p nyx-dock
+cargo build --release --locked -p nyx-dock -p nyx-dock-backend
 cargo test --locked --workspace
 make -C hyprland-plugin    # the swipe plugin (needs Hyprland's headers)
 ```
@@ -147,6 +156,13 @@ and `NYX_DOCK_TEST_DOCK_MENU=1` open a preview, an app's card, the first folder 
 menu), the Apps panel or the dock's menu at start; `NYX_DOCK_TEST_OFFSET=0.5` holds the
 bar that far through its slide out of sight. The service is `nyx-dock.service`
 (systemd user unit).
+
+The Quickshell dock's QML is in `qml/Dock` (`qml/runtime` is a copy of the shared runtime,
+from nyx-shell's `tools/vendor-runtime.sh`). To try it on a test output, run
+`NYX_DOCK_ONLY=HEADLESS-1 NYX_DOCK_UI_SOCKET=/tmp/dock.sock nyx-dock-backend` and load
+`qml/Dock` in `qs` with the same `NYX_DOCK_UI_SOCKET`, `NYX_SHELL_SCREEN=HEADLESS-1`
+and `NYX_SHELL_NO_KEYBOARD=1`; the `NYX_DOCK_TEST_*` hooks above work there too, and
+`NYX_DOCK_TEST_CONTROLS=open` opens the window controls.
 
 ## Remove
 

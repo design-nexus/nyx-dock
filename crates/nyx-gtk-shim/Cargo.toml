@@ -1,0 +1,12 @@
+[package]
+name = "nyx-gtk-shim"
+version = "0.1.0"
+description = "The gtk names the dock's GIO-only modules use, without GTK, so the dock's backend builds them unchanged"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+gio = "0.22"
+glib = "0.22"

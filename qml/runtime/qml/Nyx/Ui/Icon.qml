@@ -1,0 +1,52 @@
+import QtQuick
+import QtQuick.Effects
+import Quickshell
+
+// An icon by icon-theme name or file path. Symbolic icons (names ending in
+// `-symbolic`, or `recolor: true`) are drawn in `color`, as GTK draws them in
+// currentColor.
+Item {
+    id: icon
+
+    property string name: ""
+    property string fallback: "application-x-executable"
+    property int size: 16
+    property color color: Style.dimText
+    property bool recolor: name.endsWith("-symbolic")
+    readonly property bool ok: img.status === Image.Ready
+
+    readonly property string source: {
+        if (name === "")
+            return "";
+        if (name.startsWith("/"))
+            return "file://" + name;
+        if (name.startsWith("file:") || name.startsWith("data:") || name.startsWith("image:") || name.startsWith("qrc:"))
+            return name;
+        return Quickshell.iconPath(name, fallback);
+    }
+
+    implicitWidth: size
+    implicitHeight: size
+
+    Image {
+        id: img
+        anchors.fill: parent
+        source: icon.source
+        sourceSize: Qt.size(icon.size * 2, icon.size * 2)
+        fillMode: Image.PreserveAspectFit
+        smooth: true
+        mipmap: true
+        asynchronous: true
+        cache: true
+        visible: !icon.recolor
+    }
+
+    MultiEffect {
+        anchors.fill: parent
+        source: img
+        visible: icon.recolor
+        colorization: 1.0
+        colorizationColor: icon.color
+        brightness: 1.0
+    }
+}

@@ -3,7 +3,8 @@
 //! `nyx-dock` runs the dock (normally as the `nyx-dock` user service).
 //! `nyx-dock --enable` starts it now and at login and turns Omarchy's own dock off;
 //! `nyx-dock --disable` undoes both. `--only <connector>` shows the dock on one output
-//! only (for trying it on a test output).
+//! only (for trying it on a test output). `--ui qml|gtk` picks the Quickshell or the GTK
+//! interface.
 
 mod apps;
 mod badges;
@@ -30,16 +31,31 @@ fn main() -> std::process::ExitCode {
             "--enable" => return report(handover::enable()),
             "--disable" => return report(handover::disable()),
             "--only" => only = args.next(),
+            "--ui" => {
+                return match args.next().as_deref().map(nyx_ui_link::switch::Ui::parse) {
+                    Some(Some(ui)) => report(handover::choose(ui)),
+                    Some(None) => {
+                        eprintln!("nyx-dock: --ui takes qml or gtk");
+                        std::process::ExitCode::from(2)
+                    }
+                    None => {
+                        let now = nyx_ui_link::switch::current(&handover::COMPONENT);
+                        println!("{}", if now == nyx_ui_link::switch::Ui::Qml { "qml" } else { "gtk" });
+                        std::process::ExitCode::SUCCESS
+                    }
+                };
+            }
             "--version" => {
                 println!("nyx-dock {}", env!("CARGO_PKG_VERSION"));
                 return std::process::ExitCode::SUCCESS;
             }
             "-h" | "--help" => {
                 println!(
-                    "Usage: nyx-dock [--enable | --disable | --only <output>]\n\n\
+                    "Usage: nyx-dock [--enable | --disable | --ui [qml|gtk] | --only <output>]\n\n\
                      With no option, run the dock.\n\
                      --enable    start the dock now and at login, and turn Omarchy's dock off\n\
                      --disable   stop the dock and turn Omarchy's dock back on\n\
+                     --ui        use the Quickshell (qml) or the GTK interface; alone, show which\n\
                      --only      show the dock on this output only (e.g. HEADLESS-1)"
                 );
                 return std::process::ExitCode::SUCCESS;
@@ -51,6 +67,10 @@ fn main() -> std::process::ExitCode {
         }
     }
 
+    if only.is_none() && nyx_ui_link::switch::current(&handover::COMPONENT) == nyx_ui_link::switch::Ui::Qml {
+        eprintln!("nyx-dock: the Quickshell dock is on (nyx-dock-backend and nyx-shell-qs); switch back with: nyx-dock --ui gtk");
+        return std::process::ExitCode::SUCCESS;
+    }
     let flags = if only.is_some() { gtk::gio::ApplicationFlags::NON_UNIQUE } else { Default::default() };
     let app = gtk::Application::builder().application_id(APP_ID).flags(flags).build();
     app.connect_startup(|_| theme::install());

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["apps/dock", "crates/nyx-dock-core"]
+members = ["apps/dock", "apps/dock-backend", "crates/nyx-dock-core", "crates/nyx-gtk-shim"]
 
 [workspace.package]
 edition = "2024"

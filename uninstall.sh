@@ -11,7 +11,9 @@ config="${XDG_CONFIG_HOME:-$HOME/.config}"
 if [[ -x $bin/nyx-dock ]]; then
   "$bin/nyx-dock" --disable || true
 fi
-rm -f "$bin/nyx-dock" "$config/systemd/user/nyx-dock.service"
+rm -f "$bin/nyx-dock" "$bin/nyx-dock-backend" "$config/systemd/user/nyx-dock.service" "$config/systemd/user/nyx-dock-backend.service"
+# Its Quickshell interface (the shared runtime stays for the other components using it).
+rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/nyx-dock"
 plugin="$HOME/.local/lib/nyx-dock/nyx-dock-swipe.so"
 if [[ -f $plugin ]]; then
   if hyprctl plugin list 2>/dev/null | grep -q "^Plugin nyx-dock-swipe "; then

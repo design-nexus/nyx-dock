@@ -1,0 +1,5 @@
+module Nyx.PluginView
+depends Nyx.Ui
+PluginView 1.0 PluginView.qml
+PluginNode 1.0 PluginNode.qml
+VectorView 1.0 VectorView.qml
