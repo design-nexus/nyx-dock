@@ -206,6 +206,7 @@ Item {
                 textFormat: shown.textFormat
                 font: shown.font
                 elide: Text.ElideNone
+                maximumLineCount: 1000
             }
             Label {
                 id: shown
@@ -215,9 +216,13 @@ Item {
                     return col === "transparent" ? "" : col.toString();
                 }) : (n.p.text || "")
                 textFormat: n.p.markup ? Text.StyledText : Text.PlainText
+                // StyledText has no font face: a label all in <tt> takes the monospace one.
+                font.family: n.p.markup && /^\s*<tt>[\s\S]*<\/tt>\s*$/.test(n.p.text || "") ? Style.mono : Style.font
                 color: n.fg
                 size: n.p.font_size > 0 ? n.p.font_size : Style.body
                 elide: Text.ElideRight
+                // A plugin's line breaks stand, as in GTK; long lines still elide.
+                maximumLineCount: 1000
             }
         }
     }

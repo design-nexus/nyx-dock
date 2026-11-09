@@ -21,6 +21,13 @@ function attrs(s) {
 
 var PASS = { b: 1, i: 1, u: 1, s: 1, small: 1, big: 1, sub: 1, sup: 1, tt: 1 };
 
+// Pango keeps every space; StyledText would run them together (a `cal` grid).
+function keepSpaces(s) {
+    return s.replace(/ {2,}/g, function (m) {
+        return new Array(m.length + 1).join("&nbsp;");
+    }).replace(/(^|\n) /g, "$1&nbsp;");
+}
+
 function toStyled(markup, colorOf) {
     var out = "";
     var stack = [];
@@ -29,7 +36,7 @@ function toStyled(markup, colorOf) {
     var m;
     var text = String(markup);
     while ((m = re.exec(text)) !== null) {
-        out += text.substring(last, m.index);
+        out += keepSpaces(text.substring(last, m.index));
         last = re.lastIndex;
         var closing = m[1] === "/";
         var tag = m[2].toLowerCase();
@@ -72,7 +79,7 @@ function toStyled(markup, colorOf) {
             out += "<" + m[1] + tag + ">";
         }
     }
-    out += text.substring(last);
+    out += keepSpaces(text.substring(last));
     while (stack.length) {
         var rest = stack.pop();
         for (var j = rest.length - 1; j >= 0; j--)
