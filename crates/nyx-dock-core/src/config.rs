@@ -1,4 +1,7 @@
-//! The dock's settings: `~/.config/nyx/dock.toml`.
+//! The dock's settings: the `dock` domain of NyxOS's configuration layers, so NyxOS's
+//! defaults (`/etc/nyxos/defaults/dock.toml`) and an administrator's
+//! (`/etc/nyxos/overrides/dock.toml`) come under the user's `~/.config/nyx/dock.toml`,
+//! which holds only what the user changed. On Omarchy there are no other layers.
 //!
 //! ```toml
 //! icon_size = 48
@@ -320,9 +323,37 @@ impl Config {
         Some(toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display())))
     }
 
+    /// The settings through every layer, and what was wrong with them (a key of the wrong
+    /// type falls back on its own; a user file that isn't TOML is kept aside). `None`
+    /// when the user has no file yet: the dock's first start.
+    pub fn load_layered(store: &nyx_config::Store) -> Option<(Config, Vec<String>)> {
+        if !store.user_file().exists() {
+            return None;
+        }
+        let loaded = store.load();
+        let (config, mut problems) = nyx_config::parse::<Config>(&loaded);
+        problems.extend(loaded.problems.into_iter().map(|p| p.message));
+        Some((config, problems))
+    }
+
+    /// Save what differs from the layers below, so values left alone follow NyxOS's
+    /// defaults when they change.
+    pub fn save_layered(&self, store: &nyx_config::Store) -> Result<(), String> {
+        store.save(&nyx_config::table_of(self)).map_err(|e| format!("{e:#}"))
+    }
+
     pub fn to_toml(&self) -> String {
         toml::to_string_pretty(self).unwrap_or_default()
     }
+}
+
+/// The `dock` domain. Schema 1 is the first written by layer: a file from before held
+/// every setting, so values equal to the dock's own are dropped and follow the defaults.
+pub const DOMAIN: nyx_config::Domain = nyx_config::Domain { name: "dock", version: 1, migrations: &[nyx_config::drop_defaults] };
+
+/// The dock's settings over the system's layers.
+pub fn store() -> nyx_config::Store {
+    nyx_config::Store::new(DOMAIN, nyx_config::table_of(&Config::default()))
 }
 
 /// The apps pinned on first start: the user's own Omarchy dock pins if they set any,
@@ -339,6 +370,7 @@ pub fn first_pins(omarchy_pins: Option<Vec<String>>, browser: Option<&str>, inst
         pins.insert(1, b.trim_end_matches(".desktop").to_string());
     }
     pins.push("io.github.design_nexus.nyx.Settings".into());
+    pins.push("io.github.design_nexus.nyx.Theater".into());
     pins.retain(|p| installed(p));
     pins
 }
@@ -481,6 +513,50 @@ running = "monitor"
         let nyx = first_pins(None, Some("firefox.desktop"), installed);
         assert_eq!(nyx[0], "io.github.design_nexus.nyx.Files");
         assert_eq!(nyx[1], "firefox");
-        assert_eq!(nyx.last().unwrap(), "io.github.design_nexus.nyx.Settings");
+        assert_eq!(nyx.last().unwrap(), "io.github.design_nexus.nyx.Theater");
+    }
+
+    #[test]
+    fn layered_settings_hold_only_what_the_user_changed() {
+        let d = tempfile::tempdir().unwrap();
+        let layers = nyx_config::Layers { defaults: d.path().join("defaults"), system: d.path().join("system"), user: d.path().join("user") };
+        std::fs::create_dir_all(&layers.defaults).unwrap();
+        std::fs::write(layers.defaults.join("dock.toml"), "schema = 1\nicon_size = 42\nhide = \"never\"\n").unwrap();
+        let store = nyx_config::Store::with_layers(layers.clone(), DOMAIN, nyx_config::table_of(&Config::default()));
+        assert!(Config::load_layered(&store).is_none(), "no user file: first start");
+        let mut c = Config { pinned: vec!["a".into()], icon_size: 42, hide: Hide::Never, ..Default::default() };
+        c.save_layered(&store).unwrap();
+        let (back, problems) = Config::load_layered(&store).unwrap();
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(back.icon_size, 42);
+        assert_eq!(back.pinned, vec!["a"]);
+        let user = std::fs::read_to_string(layers.user.join("dock.toml")).unwrap();
+        assert!(!user.contains("icon_size"), "the NyxOS default isn't copied: {user}");
+        // NyxOS changes its default: the user, who never chose, follows.
+        std::fs::write(layers.defaults.join("dock.toml"), "schema = 1\nicon_size = 40\n").unwrap();
+        assert_eq!(Config::load_layered(&store).unwrap().0.icon_size, 40);
+        c.icon_size = 64;
+        c.save_layered(&store).unwrap();
+        assert_eq!(Config::load_layered(&store).unwrap().0.icon_size, 64);
+    }
+
+    #[test]
+    fn a_whole_file_from_before_keeps_only_the_changes() {
+        let d = tempfile::tempdir().unwrap();
+        let layers = nyx_config::Layers { defaults: d.path().join("defaults"), system: d.path().join("system"), user: d.path().join("user") };
+        std::fs::create_dir_all(&layers.user).unwrap();
+        // Ken's file as the dock wrote it.
+        std::fs::write(
+            layers.user.join("dock.toml"),
+            "icon_size = 42\nhide = \"never\"\nrunning = \"all\"\nposition = \"bottom\"\nhide_delay_ms = 600\npreviews = true\npreview_delay_ms = 350\npinned = [\"io.github.design_nexus.nyx.Files\"]\ntrash = true\nfolder_counts = true\napps = true\napp_names = true\nwindow_controls = false\n\n[[folders]]\npath = \"~/Downloads\"\nlook = \"folder\"\nopen = \"grid\"\nsort = \"date\"\ncount = false\n",
+        )
+        .unwrap();
+        let store = nyx_config::Store::with_layers(layers.clone(), DOMAIN, nyx_config::table_of(&Config::default()));
+        let (c, _) = Config::load_layered(&store).unwrap();
+        assert_eq!((c.icon_size, c.hide), (42, Hide::Never));
+        let user = std::fs::read_to_string(layers.user.join("dock.toml")).unwrap();
+        assert!(user.contains("icon_size = 42") && user.contains("pinned"));
+        assert!(!user.contains("hide_delay_ms") && !user.contains("trash"), "{user}");
+        assert!(layers.user.join("dock.toml.v0.bak").exists());
     }
 }

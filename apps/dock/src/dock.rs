@@ -236,21 +236,34 @@ pub fn start(app: &gtk::Application, only: Option<String>) {
         std::mem::forget(fm);
     }
 
-    // The settings file changed (Nyx Settings, or by hand).
-    let path = Config::path();
-    if let Ok(fm) = gio::File::for_path(&path).monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE) {
-        let ws = Rc::downgrade(&s);
-        fm.connect_changed(move |_, _, _, event| {
+    // The settings changed in any layer (Nyx Settings, by hand, or NyxOS's defaults in an
+    // update).
+    let (tx, rx) = async_channel::unbounded::<()>();
+    match nyx_dock_core::config::store().watch(move || {
+        let _ = tx.send_blocking(());
+    }) {
+        Ok(watch) => std::mem::forget(watch),
+        Err(e) => eprintln!("nyx-dock: can't watch the settings: {e:#}"),
+    }
+    let ws = Rc::downgrade(&s);
+    glib::spawn_future_local(async move {
+        while rx.recv().await.is_ok() {
+            // Several events for one save: take them together.
+            glib::timeout_future(Duration::from_millis(150)).await;
+            while rx.try_recv().is_ok() {}
             let Some(s) = ws.upgrade() else { return };
-            if s.saving.get() || !matches!(event, gio::FileMonitorEvent::ChangesDoneHint | gio::FileMonitorEvent::Created) {
-                return;
+            if s.saving.get() {
+                continue;
             }
-            *s.config.borrow_mut() = load_config();
+            let fresh = load_config();
+            if *s.config.borrow() == fresh {
+                continue;
+            }
+            *s.config.borrow_mut() = fresh;
             update_controls(&s);
             rebuild_docks(&s, true);
-        });
-        std::mem::forget(fm);
-    }
+        }
+    });
 
     // Screens plugged in or out.
     if let Some(display) = gdk::Display::default() {
@@ -283,20 +296,20 @@ fn update_controls(s: &Shared) {
 // ---------- Settings and apps ----------
 
 fn load_config() -> Config {
-    let path = Config::path();
-    match Config::load(&path) {
-        Some(Ok(c)) => c,
-        Some(Err(e)) => {
-            eprintln!("nyx-dock: {e}; using the defaults");
-            Config::default()
+    let store = nyx_dock_core::config::store();
+    match Config::load_layered(&store) {
+        Some((c, problems)) => {
+            for p in problems {
+                eprintln!("nyx-dock: {p}");
+            }
+            c
         }
         None => {
             // First start: pins from the user's Omarchy dock, else the Nyx apps.
             let browser = gio::AppInfo::default_for_uri_scheme("https").and_then(|a| a.id()).map(|s| s.to_string());
-            let config = Config {
-                pinned: first_pins(omarchy_pins(), browser.as_deref(), |id| launch::info(id).is_some()),
-                ..Default::default()
-            };
+            // NyxOS's defaults (or an administrator's) under the first pins.
+            let (base, _) = nyx_config::parse::<Config>(&store.load());
+            let config = Config { pinned: first_pins(omarchy_pins(), browser.as_deref(), |id| launch::info(id).is_some()), ..base };
             let _ = write_config(&config);
             config
         }
@@ -315,14 +328,8 @@ fn omarchy_pins() -> Option<Vec<String>> {
     Some(pins.iter().filter_map(|p| p.as_str()).map(|p| p.trim_end_matches(".desktop").to_string()).collect())
 }
 
-fn write_config(config: &Config) -> std::io::Result<()> {
-    let path = Config::path();
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, config.to_toml())?;
-    std::fs::rename(tmp, path)
+fn write_config(config: &Config) -> Result<(), String> {
+    config.save_layered(&nyx_dock_core::config::store())
 }
 
 fn save(s: &Rc<Shared>) {
