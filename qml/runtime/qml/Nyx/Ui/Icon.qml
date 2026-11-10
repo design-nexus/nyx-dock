@@ -15,9 +15,16 @@ Item {
     property bool recolor: name.endsWith("-symbolic")
     readonly property bool ok: img.status === Image.Ready
 
+    // The suite's own symbolics, shipped here (nyx-ui's chrome draws the same ones in
+    // GTK). The theme's "emblem-system" is Settings too: the suite's two sliders, as
+    // STYLE.md asks, not whatever the icon theme draws (a sun in some).
+    readonly property var own: ({ "nyx-settings-symbolic": "icons/nyx-settings-symbolic.svg", "emblem-system-symbolic": "icons/nyx-settings-symbolic.svg" })
+
     readonly property string source: {
         if (name === "")
             return "";
+        if (own[name])
+            return Qt.resolvedUrl(own[name]);
         if (name.startsWith("/"))
             return "file://" + name;
         if (name.startsWith("file:") || name.startsWith("data:") || name.startsWith("image:") || name.startsWith("qrc:"))

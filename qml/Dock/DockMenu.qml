@@ -100,7 +100,7 @@ DockPopup {
             Button {
                 visible: !!p.w.global.settings_app
                 text: "Dock settings"
-                icon: "emblem-system-symbolic"
+                icon: "nyx-settings-symbolic"
                 onClicked: {
                     p.close();
                     p.w.call("DockSettings", {});
