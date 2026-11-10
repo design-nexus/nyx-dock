@@ -19,14 +19,42 @@ Scope {
     readonly property int iconSize: settings.icon_size || 48
     readonly property var screen: Quickshell.screens.find(s => s.name === name) || null
     readonly property bool keyboardOff: Quickshell.env("NYX_SHELL_NO_KEYBOARD") === "1"
-    // How far out of sight the bar is: a swipe's offset, else hidden or not, animated.
-    property real slide: mon.hidden ? 1 : 0
-    readonly property real shownSlide: mon.offset !== null && mon.offset !== undefined ? mon.offset : slide
-    Behavior on slide {
-        NumberAnimation {
-            duration: Style.reducedMotion ? 0 : (w.mon.slide_ms || 180)
-            easing.type: w.mon.hidden ? Easing.InQuad : Easing.OutCubic
+    // How far out of sight the bar is (0 up, 1 away). During a workspace change it
+    // follows the backend's offset; after one it goes on from wherever that left it, so
+    // the end of a change never starts the hide or show over from the old state.
+    property real slide: 1
+    readonly property real shownSlide: slide
+    property bool primed: false
+    function follow() {
+        if (!state_.monitors)
+            return;
+        const offset = mon.offset;
+        if (offset !== null && offset !== undefined) {
+            slideAnim.stop();
+            slide = offset;
+            return;
         }
+        const to = mon.hidden ? 1 : 0;
+        if (!primed) {
+            primed = true;
+            slide = to;
+            return;
+        }
+        if (slideAnim.running ? slideAnim.to === to : slide === to)
+            return;
+        slideAnim.stop();
+        slideAnim.from = slide;
+        slideAnim.to = to;
+        slideAnim.duration = Style.reducedMotion ? 0 : (mon.slide_ms || 180);
+        slideAnim.easing.type = mon.hidden ? Easing.InQuad : Easing.OutCubic;
+        slideAnim.start();
+    }
+    onMonChanged: follow()
+    Component.onCompleted: follow()
+    NumberAnimation {
+        id: slideAnim
+        target: w
+        property: "slide"
     }
     property int holds: 0
     property bool hovered: false
