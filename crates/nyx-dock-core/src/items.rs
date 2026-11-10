@@ -26,11 +26,11 @@ impl Item {
     }
 }
 
-/// Whether the dock counts a window: on a user workspace (1–10) or a special one
-/// (scratchpad, minimized). Windows on internal workspaces (test outputs, Settings'
-/// loop placeholders, future agent workspaces) never show.
+/// Whether the dock counts a window: on a user workspace (1–10, or a virtual monitor's
+/// own) or a special one (scratchpad, minimized). Windows on internal workspaces (test
+/// outputs, Settings' loop placeholders, future agent workspaces) never show.
 pub fn counts(desktop: &Desktop, w: &Window) -> bool {
-    nyx_desktop::is_user_workspace(w.workspace) || desktop.workspaces.iter().any(|ws| ws.id == w.workspace && ws.is_special())
+    nyx_desktop::is_user_workspace(w.workspace) || desktop.workspaces.iter().any(|ws| ws.id == w.workspace && (ws.is_user() || ws.is_special()))
 }
 
 /// Build the items. `order` is the running apps' order from last time (by key), so

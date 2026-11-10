@@ -1471,6 +1471,15 @@ fn open_preview(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, key: &str) {
     });
 }
 
+/// The number a user knows a workspace by: its id for 1 to 10, its name for a virtual
+/// monitor's own workspaces (203 is that region's 3).
+fn user_workspace_number(desktop: &nyx_desktop::Desktop, id: i64) -> Option<String> {
+    if nyx_desktop::is_user_workspace(id) {
+        return Some(id.to_string());
+    }
+    desktop.workspaces.iter().find(|ws| ws.id == id && ws.is_user()).map(|ws| ws.name.clone())
+}
+
 fn preview_card(
     s: &Rc<Shared>,
     d: &Rc<Dock>,
@@ -1548,10 +1557,9 @@ fn preview_card(
     caption.append(&title);
     let place = if minimized {
         Some(("preview-minimized", "–".to_string(), "Minimized".to_string()))
-    } else if nyx_desktop::is_user_workspace(w.workspace) {
-        Some(("preview-ws", w.workspace.to_string(), format!("Workspace {}", w.workspace)))
     } else {
-        None
+        user_workspace_number(&s.desktop.borrow(), w.workspace)
+            .map(|number| ("preview-ws", number.clone(), format!("Workspace {number}")))
     };
     if let Some((class, text, tip)) = place {
         let label = gtk::Label::new(Some(&text));
