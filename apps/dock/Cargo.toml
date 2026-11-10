@@ -16,7 +16,7 @@ async-channel = "2"
 gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
 gio-unix = "0.22"
 gtk4-layer-shell = "0.8"
-nyx-desktop = { git = "https://github.com/design-nexus/nyx-core.git", rev = "04c93f7670075f5b4cf8150fcafe3f485b6dc693", features = ["capture"] }
+nyx-desktop = { git = "https://github.com/design-nexus/nyx-core.git", rev = "c6590d4194f8f5857e23fcf1b52ca171a2202c92", features = ["capture"] }
 nyx-dock-core = { path = "../../crates/nyx-dock-core" }
 nyx-config = { git = "https://github.com/nyxos-project/nyx-system.git", rev = "f68ecc891cd0d5a36b6ed29e93ed5ffc52e77acc" }
 nyx-ui-link = { git = "https://github.com/design-nexus/nyx-core.git", rev = "afae3bb8dceba28026a83f24a14e51b47c726dfe" }

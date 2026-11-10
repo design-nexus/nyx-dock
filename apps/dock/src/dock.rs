@@ -1471,13 +1471,13 @@ fn open_preview(s: &Rc<Shared>, d: &Rc<Dock>, tile: &gtk::Box, key: &str) {
     });
 }
 
-/// The number a user knows a workspace by: its id for 1 to 10, its name for a virtual
-/// monitor's own workspaces (203 is that region's 3).
+/// The number a user knows a workspace by (1 to 10): a second screen's 13 under Omarchy
+/// is its 3, and so is a virtual monitor's 203.
 fn user_workspace_number(desktop: &nyx_desktop::Desktop, id: i64) -> Option<String> {
-    if nyx_desktop::is_user_workspace(id) {
-        return Some(id.to_string());
+    match desktop.workspaces.iter().find(|ws| ws.id == id) {
+        Some(ws) => desktop.workspace_number(ws).map(|n| n.to_string()),
+        None => nyx_desktop::is_user_workspace(id).then(|| id.to_string()),
     }
-    desktop.workspaces.iter().find(|ws| ws.id == id && ws.is_user()).map(|ws| ws.name.clone())
 }
 
 fn preview_card(
