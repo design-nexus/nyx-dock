@@ -73,7 +73,7 @@ DockPopup {
             }
         }
         Repeater {
-            model: [["previews", "Window previews"], ["apps", "Apps button"], ["app_names", "App names"], ["trash", "Trash"]]
+            model: [["previews", "Window previews"], ["apps", "Apps button"], ["app_names", "App names"], ["apps_search_bar", "Apps search bar"], ["trash", "Trash"]]
             delegate: Item {
                 required property var modelData
                 width: parent.width

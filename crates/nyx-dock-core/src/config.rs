@@ -11,6 +11,7 @@
 //! pinned = ["io.github.design_nexus.nyx.Files", "firefox"]
 //! apps = true             # the Apps button first
 //! app_names = true        # names under the icons in the Apps panel
+//! apps_search_bar = false # the Apps panel's search bar always shown (off: when you type)
 //! folder_counts = true    # item count badges on folders (a folder's `count` overrides)
 //! window_controls = false # hover buttons on floating windows
 //!
@@ -176,6 +177,8 @@ pub struct Config {
     pub apps: bool,
     /// Names under the icons in the Apps panel (off: icons only).
     pub app_names: bool,
+    /// The Apps panel's search bar always in sight; off, it appears as you type.
+    pub apps_search_bar: bool,
     /// Hover buttons (minimize, maximize, close) on the focused floating window, for
     /// when Omarchy's floating titlebar is off. Settings sets it.
     pub window_controls: bool,
@@ -199,6 +202,7 @@ impl Default for Config {
             folder_counts: true,
             apps: true,
             app_names: true,
+            apps_search_bar: false,
             window_controls: false,
             monitors: BTreeMap::new(),
         }

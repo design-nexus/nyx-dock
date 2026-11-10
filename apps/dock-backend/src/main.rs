@@ -311,7 +311,7 @@ fn publish(s: &Rc<Shared>) {
             json!({
                 "global": {
                     "previews": c.previews, "preview_delay_ms": c.preview_delay_ms, "hide_delay_ms": c.hide_delay_ms,
-                    "apps": c.apps, "app_names": c.app_names, "trash": c.trash, "folder_counts": c.folder_counts,
+                    "apps": c.apps, "app_names": c.app_names, "apps_search_bar": c.apps_search_bar, "trash": c.trash, "folder_counts": c.folder_counts,
                     "window_controls": c.window_controls, "switcher": launch::switcher_installed(),
                     "settings_app": launch::settings_installed(), "store": launch::store_installed(),
                 },
@@ -811,6 +811,7 @@ fn handle(s: &Rc<Shared>, req: nyx_ui_link::Request) {
                     ("previews", _) => c.previews = v.as_bool().unwrap_or(c.previews),
                     ("apps", _) => c.apps = v.as_bool().unwrap_or(c.apps),
                     ("app_names", _) => c.app_names = v.as_bool().unwrap_or(c.app_names),
+                    ("apps_search_bar", _) => c.apps_search_bar = v.as_bool().unwrap_or(c.apps_search_bar),
                     ("trash", _) => c.trash = v.as_bool().unwrap_or(c.trash),
                     _ => return req.err("invalid", format!("can't set {what}")),
                 }
