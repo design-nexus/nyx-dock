@@ -134,6 +134,7 @@ mod tests {
             y: 0,
             scale: 1.0,
             transform: 0,
+            refresh_rate: 60.0,
             focused: true,
             disabled: false,
             active_workspace: active,
