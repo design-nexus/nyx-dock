@@ -20,12 +20,21 @@ DockPopup {
     keyboard: true
     pad: 12
 
-    onPopupOpened: {
+    // The list from last time shows at once and is read again behind it; the first
+    // opening waits for it.
+    onPreparing: {
         query = "";
         search.clear();
-        w.client.request("Apps", {}, ok => p.apps = ok || []);
-        search.focusInput();
+        waiting = apps.length === 0;
+        w.client.request("Apps", {}, ok => {
+            p.apps = ok || [];
+            p.ready();
+        });
     }
+    onPopupOpened: search.focusInput()
+    readonly property int cell: names ? 84 : 64
+    // As tall as every app needs (searching doesn't resize it), up to 60 % of the screen.
+    readonly property real listHeight: Math.min(Math.ceil(apps.length / columns) * cell, Math.max(200, Math.min(520, (w.screen ? w.screen.height : 800) * 0.6)))
     function launch(a) {
         p.close();
         w.call("Launch", { key: a.id });
@@ -46,21 +55,21 @@ DockPopup {
                 p.launch(p.shown[0])
             onEscaped: p.close()
         }
-        Label {
-            visible: p.shown.length === 0 && p.apps.length > 0
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            topPadding: 20
-            bottomPadding: 20
-            text: "No apps found"
-            dim: true
-        }
+
         Flickable {
             width: parent.width
-            height: Math.min(contentHeight, Math.max(200, Math.min(520, (p.w.screen ? p.w.screen.height : 800) * 0.6)))
+            height: p.listHeight
             clip: true
             contentHeight: grid.height
             boundsBehavior: Flickable.StopAtBounds
+            Label {
+                visible: p.shown.length === 0 && p.apps.length > 0
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                topPadding: 20
+                text: "No apps found"
+                dim: true
+            }
             Grid {
                 id: grid
                 columns: p.columns

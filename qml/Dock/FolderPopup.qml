@@ -15,11 +15,18 @@ DockPopup {
 
     anchorTo: tile
     pad: 10
+    bare: kind === "fan"
 
     function load() {
-        w.client.request("Folder", { index: folder.index, sort: sort }, ok => p.entries = ok || []);
+        w.client.request("Folder", { index: folder.index, sort: sort }, ok => {
+            p.entries = ok || [];
+            p.ready();
+        });
     }
-    onPopupOpened: load()
+    onPreparing: {
+        waiting = true;
+        load();
+    }
     onSortChanged: if (visible)
         load()
     function openFile(e) {
@@ -30,10 +37,14 @@ DockPopup {
     component Thumb: Rectangle {
         property var entry: ({})
         property int box: 48
+        // The fan's: a framed picture over the desktop.
+        property bool framed: false
         width: box
         height: box * 7 / 8
-        radius: 6
-        color: Style.alpha(Style.text, 0.05)
+        radius: framed ? 8 : 6
+        color: framed ? Style.popover : Style.alpha(Style.text, 0.05)
+        border.width: framed ? 1 : 0
+        border.color: Style.border
         clip: true
         Image {
             anchors.fill: parent
@@ -54,8 +65,35 @@ DockPopup {
         Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
     }
 
+    // How far a fan row sits from the edge: a gentle curve, the top row nearest it.
+    function arc(i) {
+        return 3 * i * i;
+    }
+    readonly property var fanned: entries.slice(0, 8)
+    readonly property int fanWidth: 266 + arc(fanned.length) - arc(1)
+
+    component FanPill: Rectangle {
+        property string text: ""
+        property bool hot: false
+        width: pillLabel.width + 18
+        height: pillLabel.implicitHeight + 8
+        radius: 7
+        color: hot ? Style.accent : Style.popover
+        border.width: hot ? 0 : 1
+        border.color: Style.border
+        Label {
+            id: pillLabel
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, 190)
+            text: parent.text
+            size: 12
+            elide: Text.ElideMiddle
+            color: parent.hot ? Style.onAccent : Style.text
+        }
+    }
+
     Column {
-        width: p.kind === "fan" ? 240 : p.kind === "list" ? 320 : 340
+        width: p.kind === "fan" ? p.fanWidth : p.kind === "list" ? 320 : 340
         spacing: 8
 
         // Grid and list: a header.
@@ -103,20 +141,37 @@ DockPopup {
             dim: true
         }
 
-        // Fan: the newest eight, newest at the bottom, curving.
+        // Fan: no panel; Open in Files on top, then the newest eight, oldest first,
+        // each a name and a picture, bending away from the edge as they come down.
         Column {
             visible: p.kind === "fan"
             width: parent.width
-            spacing: 4
-            Rectangle {
+            spacing: 8
+            Item {
                 width: parent.width
-                height: 30
-                radius: Style.radiusSmall
-                color: openAll.containsMouse ? Style.rowHover : "transparent"
-                Label {
-                    anchors.centerIn: parent
-                    text: "Open in Files · " + p.entries.length + " items"
-                    role: "secondary"
+                height: 42
+                Row {
+                    anchors.right: parent.right
+                    spacing: 10
+                    FanPill {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Open in Files · " + p.entries.length + " items"
+                        hot: openAll.containsMouse
+                    }
+                    Rectangle {
+                        width: 48
+                        height: 42
+                        radius: 8
+                        color: Style.popover
+                        border.width: 1
+                        border.color: Style.border
+                        Icon {
+                            anchors.centerIn: parent
+                            name: "folder-open-symbolic"
+                            size: 24
+                            color: Style.text
+                        }
+                    }
                 }
                 MouseArea {
                     id: openAll
@@ -129,33 +184,35 @@ DockPopup {
                 }
             }
             Repeater {
-                model: p.kind === "fan" ? p.entries.slice(0, 8).reverse() : []
-                delegate: Rectangle {
+                model: p.kind === "fan" ? p.fanned.slice().reverse() : []
+                delegate: Item {
+                    id: fanRow
                     required property var modelData
                     required property int index
-                    readonly property int i: Math.min(8, p.entries.length) - 1 - index
-                    x: 3 * i * i
-                    width: parent.width - 3 * 49
-                    height: 52
-                    radius: Style.radiusSmall
-                    color: fanArea.containsMouse ? Style.rowHover : "transparent"
-                    Thumb {
-                        x: 2
-                        anchors.verticalCenter: parent.verticalCenter
-                        entry: parent.modelData
-                        box: 48
-                    }
-                    Label {
-                        x: 58
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 62
-                        text: parent.modelData.name
+                    // Its place counted from the newest (0).
+                    readonly property int i: p.fanned.length - 1 - index
+                    width: parent.width
+                    height: 42
+                    Row {
+                        anchors.right: parent.right
+                        anchors.rightMargin: p.arc(p.fanned.length) - p.arc(fanRow.i + 1)
+                        spacing: 10
+                        FanPill {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: fanRow.modelData.name
+                            hot: fanArea.containsMouse
+                        }
+                        Thumb {
+                            entry: fanRow.modelData
+                            box: 48
+                            framed: true
+                        }
                     }
                     MouseArea {
                         id: fanArea
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: p.openFile(parent.modelData)
+                        onClicked: p.openFile(fanRow.modelData)
                     }
                 }
             }

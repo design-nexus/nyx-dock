@@ -18,13 +18,33 @@ DockPopup {
     keyboard: true
     pad: 12
 
-    onPopupOpened: {
+    // Everything the card shows arrives before it opens, so it opens at its size.
+    property int loads: 0
+    function loaded() {
+        loads -= 1;
+        if (loads <= 0)
+            ready();
+    }
+    onPreparing: {
         info = null;
         list = null;
         player = null;
-        w.client.request("Card", { key: item.key }, ok => p.info = ok);
-        w.client.request("CardList", { key: item.key }, ok => p.list = ok);
-        readPlayer();
+        const running = (item.windows || []).length > 0;
+        loads = running ? 3 : 2;
+        waiting = true;
+        w.client.request("Card", { key: item.key }, ok => {
+            p.info = ok;
+            p.loaded();
+        });
+        w.client.request("CardList", { key: item.key }, ok => {
+            p.list = ok;
+            p.loaded();
+        });
+        if (running)
+            w.client.request("Player", { key: item.key }, ok => {
+                p.player = ok;
+                p.loaded();
+            });
     }
     function readPlayer() {
         if ((item.windows || []).length > 0)

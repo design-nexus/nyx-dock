@@ -21,10 +21,17 @@ Singleton {
         return NyxTheme.qmlColor(l[name] || fallback);
     }
     // GTK's mix(a, b, t).
+    // Colours may come as names or "#rrggbb" strings (theme swatches, plugin colours).
+    function toColor(c) {
+        return typeof c === "string" ? Qt.lighter(c, 1.0) : c;
+    }
     function mix(a, b, t) {
+        a = toColor(a);
+        b = toColor(b);
         return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t);
     }
     function alpha(col, a) {
+        col = toColor(col);
         return Qt.rgba(col.r, col.g, col.b, col.a * a);
     }
 

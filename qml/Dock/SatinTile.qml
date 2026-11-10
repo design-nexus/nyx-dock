@@ -20,29 +20,30 @@ Item {
         radius: Style.radiusSmall
         color: drop.containsDrag ? Style.alpha(Style.accent, 0.16) : area.containsMouse ? Style.alpha(Style.text, 0.06) : "transparent"
     }
+    // As the GTK dock's .dock-satin: a soft square, a hairline, a muted glyph.
     Rectangle {
-        x: 4 + t.size * 0.06
-        y: 2 + t.size * 0.06
-        width: t.size * 0.88
-        height: width
-        radius: width * 0.25
+        x: 4
+        y: 2
+        width: t.size
+        height: t.size
+        radius: 11
         gradient: Gradient {
             GradientStop {
                 position: 0
-                color: Style.light ? Style.mix(Style.bg, "white", 0.6) : Style.mix(Style.raised, Style.bg, 0.2)
+                color: Style.mix(Style.bg, Style.text, 0.1)
             }
             GradientStop {
                 position: 1
-                color: Style.light ? Style.mix(Style.bg, Style.shadow, 0.08) : Style.mix(Style.bg, Style.shadow, 0.4)
+                color: Style.mix(Style.bg, Style.text, 0.03)
             }
         }
         border.width: 1
-        border.color: Style.alpha(Style.accent, 0.3)
+        border.color: Style.alpha(Style.text, 0.1)
         Icon {
             anchors.centerIn: parent
-            size: t.size * 0.5
+            size: Math.max(16, Math.floor(t.size / 2))
             recolor: true
-            color: Style.accent
+            color: Style.mix(Style.text, Style.bg, 0.32)
             name: t.kind === "apps" ? "view-app-grid-symbolic" : (t.trash > 0 ? "user-trash-full-symbolic" : "user-trash-symbolic")
         }
     }

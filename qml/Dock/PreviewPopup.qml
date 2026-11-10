@@ -18,6 +18,7 @@ DockPopup {
 
     anchorTo: tile
     pad: 8
+    grab: false
 
     function leaveSoon() {
         leave.restart();
