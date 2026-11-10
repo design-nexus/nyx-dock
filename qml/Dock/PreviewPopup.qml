@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Nyx.Ui
 
 // The windows of a running app, pictured: click one to go to it, close it from its
@@ -55,11 +56,16 @@ DockPopup {
         rows: p.vertical ? 1000 : 1
         columns: p.vertical ? 1 : 1000
         spacing: 8
+        // Keyed by window: the dock's state comes again on every change (more often
+        // where it hides), and a card made again would reload its picture and flicker.
         Repeater {
-            model: p.windows
+            model: ScriptModel {
+                values: p.windows.map(x => x.address)
+            }
             delegate: Rectangle {
                 id: c
-                required property var modelData
+                required property string modelData
+                readonly property var win: p.windows.find(x => x.address === modelData) || ({})
                 width: p.cardW
                 height: p.cardH + 30
                 radius: Style.radiusCard
@@ -75,14 +81,14 @@ DockPopup {
                     Image {
                         anchors.fill: parent
                         visible: status === Image.Ready
-                        source: p.shots[c.modelData.stable_id] ? "file://" + p.shots[c.modelData.stable_id] : ""
+                        source: p.shots[c.win.stable_id] ? "file://" + p.shots[c.win.stable_id] : ""
                         fillMode: Image.PreserveAspectFit
                         cache: false
                         asynchronous: true
                     }
                     Icon {
                         anchors.centerIn: parent
-                        visible: !p.shots[c.modelData.stable_id]
+                        visible: !p.shots[c.win.stable_id]
                         size: 48
                         name: p.tile.item.icon
                     }
@@ -100,18 +106,18 @@ DockPopup {
                     Label {
                         anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - 16 - 6 - ws.width - 6
-                        text: c.modelData.title
+                        text: c.win.title
                         size: 12
                     }
                     Rectangle {
                         id: ws
                         anchors.verticalCenter: parent.verticalCenter
-                        readonly property string label: c.modelData.minimized ? "–" : (c.modelData.special ? "" : String(c.modelData.workspace))
+                        readonly property string label: c.win.minimized ? "–" : (c.win.special ? "" : String(c.win.workspace))
                         visible: label !== ""
                         width: Math.max(18, wsl.implicitWidth + 8)
                         height: 18
                         radius: 9
-                        color: c.modelData.current ? Style.alpha(Style.accent, 0.25) : Style.alpha(Style.text, 0.08)
+                        color: c.win.current ? Style.alpha(Style.accent, 0.25) : Style.alpha(Style.text, 0.08)
                         Label {
                             id: wsl
                             anchors.centerIn: parent
@@ -127,7 +133,7 @@ DockPopup {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         p.close();
-                        p.w.call("FocusWindow", { address: c.modelData.address });
+                        p.w.call("FocusWindow", { address: c.win.address });
                     }
                 }
                 IconButton {
@@ -142,7 +148,7 @@ DockPopup {
                     danger: true
                     color: Style.alpha(Style.popover, 0.9)
                     onClicked: {
-                        p.w.call("CloseWindow", { address: c.modelData.address });
+                        p.w.call("CloseWindow", { address: c.win.address });
                         if (p.windows.length <= 1)
                             p.close();
                     }
