@@ -16,10 +16,10 @@ async-channel = "2"
 gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
 gio-unix = "0.22"
 gtk4-layer-shell = "0.8"
-nyx-desktop = { git = "https://github.com/design-nexus/nyx-core.git", rev = "4f05fb8fc92ec211f4e0f0b722fdf29a083c9e89", features = ["capture"] }
+nyx-desktop = { git = "https://github.com/design-nexus/nyx-core.git", rev = "166ff17bdb09dd6c5f130fd28ecf81d1f8a59d2d", features = ["capture"] }
 nyx-dock-core = { path = "../../crates/nyx-dock-core" }
 nyx-config = { git = "https://github.com/nyxos-project/nyx-system.git", rev = "f68ecc891cd0d5a36b6ed29e93ed5ffc52e77acc" }
-nyx-ui-link = { git = "https://github.com/design-nexus/nyx-core.git", rev = "4f05fb8fc92ec211f4e0f0b722fdf29a083c9e89" }
-nyx-theme = { git = "https://github.com/design-nexus/nyx-design.git", rev = "cf393978364ca7b2a309a88a8d1651bf9d338916" }
+nyx-ui-link = { git = "https://github.com/design-nexus/nyx-core.git", rev = "166ff17bdb09dd6c5f130fd28ecf81d1f8a59d2d" }
+nyx-theme = { git = "https://github.com/design-nexus/nyx-design.git", rev = "553f65567057150af4929033896531879528bbf4" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
