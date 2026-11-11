@@ -107,7 +107,10 @@ Scope {
     PanelWindow {
         id: win
         screen: w.screen
-        visible: w.screen !== null && (w.shownSlide < 1 || w.holds > 0)
+        // Mapped even while hidden (the bar out of sight, no input): a swipe away from a
+        // fullscreen workspace shows only the top-layer surfaces mapped when it starts, and
+        // one mapped during it stays transparent until it ends.
+        visible: w.screen !== null
         color: "transparent"
         anchors.bottom: w.position === "bottom"
         anchors.top: w.position === "top"
