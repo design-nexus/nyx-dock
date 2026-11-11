@@ -3,4 +3,5 @@ depends Nyx.Ui
 PluginView 1.0 PluginView.qml
 PluginNode 1.0 PluginNode.qml
 VectorView 1.0 VectorView.qml
+MonoTint 1.0 MonoTint.qml
 singleton PluginStyle 1.0 PluginStyle.qml

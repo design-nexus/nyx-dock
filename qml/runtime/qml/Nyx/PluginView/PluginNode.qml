@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Quickshell
 import Quickshell.Widgets
 import Nyx.Ui
 import "markup.js" as Markup
@@ -157,7 +158,7 @@ Item {
         y: n.m[0] + n.pad[0]
         width: n.width - n.m[1] - n.m[3] - n.pad[1] - n.pad[3]
         height: n.height - n.m[0] - n.m[2] - n.pad[0] - n.pad[2]
-        sourceComponent: ({
+        sourceComponent: (n.kind === "icon" || n.kind === "image") && n.has("mono") ? monoC : ({
                 box: boxC, overlay: overlayC, stack: stackC, label: labelC, icon: iconC, image: imageC,
                 badge: badgeC, progress: progressC, graph: graphC, spinner: spinnerC, vector: vectorC,
                 frame: frameC, row: rowC, toggle: toggleC, slider: sliderC, button: buttonC, entry: entryC,
@@ -200,6 +201,8 @@ Item {
         required property var modelData
         property bool horizontal: true
         property string align: "center"
+        // A hidden node takes no room or spacing in its box.
+        visible: modelData.visible !== false
         Layout.fillWidth: horizontal ? !!modelData.expand : (align === "fill" && !(modelData.width > 0))
         Layout.fillHeight: horizontal ? (align === "fill" && !(modelData.height > 0)) : !!modelData.expand
         Layout.alignment: horizontal ? ({ start: Qt.AlignTop, end: Qt.AlignBottom })[align] || Qt.AlignVCenter : ({ start: Qt.AlignLeft, end: Qt.AlignRight })[align] || Qt.AlignHCenter
@@ -339,6 +342,22 @@ Item {
             recolor: name.endsWith("-symbolic") || !!n.p.color
             color: n.fg
             rotation: n.st.rotate || 0
+        }
+    }
+
+    // An app's own picture that is all one neutral colour (a white tray icon; the host
+    // marks it `mono`), in the text colour.
+    Component {
+        id: monoC
+        MonoTint {
+            size: n.kind === "icon" ? (n.p.size > 0 ? n.p.size : (n.st["icon-size"] || 16)) : (n.p.width || 16)
+            color: n.fg
+            source: {
+                if (n.kind === "image")
+                    return n.p.data ? "data:image/png;base64," + n.p.data : (n.p.path ? "file://" + n.p.path : "");
+                const name = PluginStyle.icon(n.p.name);
+                return name.startsWith("/") ? "file://" + name : Quickshell.iconPath(name, true);
+            }
         }
     }
 
