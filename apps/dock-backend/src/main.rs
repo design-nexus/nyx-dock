@@ -305,7 +305,7 @@ fn publish(s: &Rc<Shared>) {
                 }))
             })
             .collect();
-        let folders: Vec<Value> = c.folders.iter().enumerate().map(|(i, f)| files::folder_json(i, f, c.folder_counts)).collect();
+        let (folders, trash) = files::tiles(&c.folders, c.folder_counts);
         s.link.publish(
             "dock",
             json!({
@@ -316,7 +316,7 @@ fn publish(s: &Rc<Shared>) {
                     "settings_app": launch::settings_installed(), "store": launch::store_installed(),
                 },
                 "folders": folders,
-                "trash": files::trash_count(),
+                "trash": trash,
                 "monitors": monitors,
             }),
         );
@@ -475,8 +475,12 @@ fn follow_swipe(s: &Rc<Shared>, event: &SwipeEvent) {
                 }
                 let to = resolve_loop(&desktop, monitor, start, *to);
                 let to_hidden = should_hide_on(hide_on(&d, &desktop, to), &desktop, m, to, dock_rect(&d), d.position());
-                d.offset.set(Some(nyx_dock_core::swipe::offset(was_hidden, to_hidden, *progress)));
-                publish(s);
+                // The plugin reports every frame of every slide; a dock that isn't moving
+                // (shown on both workspaces, or hidden on both) has nothing to publish.
+                let offset = Some(nyx_dock_core::swipe::offset(was_hidden, to_hidden, *progress));
+                if d.offset.replace(offset) != offset {
+                    publish(s);
+                }
                 watch_swipe(s, &d);
             }
             SwipeEvent::Done { monitor, active } if *monitor == d.connector => end_swipe(s, &d, Some(*active)),

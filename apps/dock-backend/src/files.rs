@@ -107,8 +107,35 @@ pub fn trash_count() -> u32 {
         .unwrap_or(0)
 }
 
+/// Folder settings and folder counts, when they were read, the tiles and the Trash count.
+type Tiles = (Vec<Folder>, bool, std::time::Instant, Vec<Value>, u32);
+
 thread_local! {
     static MONITORS: RefCell<Vec<gio::FileMonitor>> = const { RefCell::new(Vec::new()) };
+    /// The folder tiles and the Trash count as last read, for the folder settings they
+    /// were read with; a change in a folder or the Trash ([`watch`]) clears them, and
+    /// they're read again after a minute for the files' ages ("5 min ago").
+    static TILES: RefCell<Option<Tiles>> = const { RefCell::new(None) };
+}
+
+/// The folder tiles and the Trash count. Every change on the desktop publishes the
+/// dock again; listing the folders and asking for the Trash each time made a focus or
+/// workspace change wait on the disk and D-Bus.
+pub fn tiles(folders: &[Folder], counts: bool) -> (Vec<Value>, u32) {
+    TILES.with(|t| {
+        let mut t = t.borrow_mut();
+        if let Some((f, c, at, tiles, trash)) = t.as_ref()
+            && f == folders
+            && *c == counts
+            && at.elapsed() < Duration::from_secs(60)
+        {
+            return (tiles.clone(), *trash);
+        }
+        let tiles: Vec<Value> = folders.iter().enumerate().map(|(i, f)| folder_json(i, f, counts)).collect();
+        let trash = trash_count();
+        *t = Some((folders.to_vec(), counts, std::time::Instant::now(), tiles.clone(), trash));
+        (tiles, trash)
+    })
 }
 
 /// Redraw folder tiles and the Trash when they change (debounced).
@@ -127,6 +154,7 @@ pub fn watch(s: &Rc<Shared>) {
             let (ws, pending) = (ws.clone(), pending.clone());
             glib::timeout_add_local_once(Duration::from_millis(500), move || {
                 pending.set(false);
+                TILES.with(|t| *t.borrow_mut() = None);
                 if let Some(s) = ws.upgrade() {
                     crate::changed(&s);
                 }

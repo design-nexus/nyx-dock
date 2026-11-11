@@ -25,7 +25,24 @@ fn spawn(args: &[String]) {
 }
 
 pub fn info(id: &str) -> Option<gio_unix::DesktopAppInfo> {
-    gio_unix::DesktopAppInfo::new(&format!("{id}.desktop"))
+    // Each tile asks for its app's entry several times per redraw, and every change on
+    // the desktop redraws: parsing the .desktop file each time made the dock lag. Kept
+    // for a few seconds, so an app installed or removed shows up soon.
+    type Seen = std::collections::HashMap<String, (std::time::Instant, Option<gio_unix::DesktopAppInfo>)>;
+    thread_local! {
+        static SEEN: std::cell::RefCell<Seen> = std::cell::RefCell::new(Seen::new());
+    }
+    SEEN.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        if let Some((at, info)) = seen.get(id)
+            && at.elapsed() < std::time::Duration::from_secs(10)
+        {
+            return info.clone();
+        }
+        let info = gio_unix::DesktopAppInfo::new(&format!("{id}.desktop"));
+        seen.insert(id.to_string(), (std::time::Instant::now(), info.clone()));
+        info
+    })
 }
 
 /// Start an app, or one of its desktop actions (`new-window`, …).
