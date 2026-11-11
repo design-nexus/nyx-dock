@@ -1,14 +1,16 @@
 import QtQuick
 
 // A text button (optionally with an icon). `primary` is the solid accent button (one
-// per view); `danger` arms on the first click and acts on a second within 4 s, as
-// STYLE.md asks of destructive actions, unless `confirm` is false.
+// per view); `toggled` is an accent tint, for the selected one of a row of tabs;
+// `danger` arms on the first click and acts on a second within 4 s, as STYLE.md asks
+// of destructive actions, unless `confirm` is false.
 Rectangle {
     id: b
 
     property string text: ""
     property string icon: ""
     property bool primary: false
+    property bool toggled: false
     property bool danger: false
     property bool confirm: danger
     property string armedText: "Click again"
@@ -35,10 +37,16 @@ Rectangle {
     implicitWidth: row.implicitWidth + 24
     radius: Style.radiusSmall
     activeFocusOnTab: true
+    // For screen readers: a button named by its text; pressing it as Space would.
+    Accessible.role: Accessible.Button
+    Accessible.name: armed ? armedText : text
+    Accessible.checkable: toggled
+    Accessible.checked: toggled
+    Accessible.onPressAction: press()
     onActiveFocusChanged: if (activeFocus) focusReason = area.pressed ? Qt.MouseFocusReason : Qt.TabFocusReason
     opacity: enabled ? 1 : 0.45
-    color: primary ? (hovered ? Qt.lighter(Style.accent, 1.08) : Style.accent) : armed ? Style.alpha(Style.danger, 0.2) : (danger && hovered) ? Style.alpha(Style.danger, 0.14) : hovered ? Style.rowHover : flat ? "transparent" : Style.field
-    border.width: primary || flat ? 0 : 1
+    color: primary ? (hovered ? Qt.lighter(Style.accent, 1.08) : Style.accent) : armed ? Style.alpha(Style.danger, 0.2) : (danger && hovered) ? Style.alpha(Style.danger, 0.14) : toggled ? Style.alpha(Style.accent, hovered ? 0.26 : 0.2) : hovered ? Style.rowHover : flat ? "transparent" : Style.field
+    border.width: primary || toggled || flat ? 0 : 1
     border.color: Style.alpha(Style.border, 0.5)
 
     Behavior on color {

@@ -16,6 +16,11 @@ Rectangle {
     color: checked ? Style.accent : Style.track
     opacity: enabled ? 1 : 0.45
     activeFocusOnTab: true
+    Accessible.role: Accessible.CheckBox
+    Accessible.checkable: true
+    Accessible.checked: checked
+    Accessible.onToggleAction: toggled(!checked)
+    Accessible.onPressAction: toggled(!checked)
     onActiveFocusChanged: if (activeFocus) focusReason = area.pressed ? Qt.MouseFocusReason : Qt.TabFocusReason
 
     Behavior on color {

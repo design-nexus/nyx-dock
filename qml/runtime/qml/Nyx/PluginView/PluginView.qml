@@ -1,8 +1,9 @@
 import QtQuick
+import "style.js" as Css
 
 // A plugin's view (nyx-plugin-protocol's Node tree, the JSON a plugin sends) drawn
-// with Nyx.Ui, for QML hosts: the Control Center's plugin tiles and the desktop
-// widgets. The QML counterpart of nyx-design's nyx-plugin-view.
+// with Nyx.Ui, for QML hosts: Nyx Bar, the Control Center's plugin tiles and the
+// desktop widgets. The QML counterpart of nyx-design's nyx-plugin-view.
 //
 //   PluginView {
 //       view: tile.view                     // the item's tree, paths already resolved
@@ -11,15 +12,26 @@ import QtQuick
 //   … and on a `patch` message: view.patch(nodes)   // [{id, set: {…}}]
 //
 // The backend resolves `/plugin/…` and `/storage/…` paths before the tree gets here and
-// leaves out files a third-party plugin may not show. Plugin CSS (style.css) isn't
-// applied; Pango markup is shown through StyledText (markup.js); `frame` nodes show
-// nothing.
+// leaves out files a third-party plugin may not show. Plugin CSS applies when the host
+// passes it as `rules` (compiled, see style.js); Pango markup is shown through
+// StyledText (markup.js); `frame` nodes show nothing.
 Item {
     id: root
 
     property var view: null
     // The largest height inline nodes may take (a bar's height); 0 for none.
     property int maxHeight: 0
+    // Style rules (style.js): a host's classes, then the plugin's style.css. With none,
+    // nodes take only the few classes this view knows (dim, accent, …).
+    property var rules: []
+    readonly property bool hoverRules: Css.anyHover(rules)
+    // The host's element around the view (`&` in a plugin's CSS): its classes, whether
+    // the pointer is over it, and the text settings it passes down.
+    property var rootClasses: []
+    property bool rootHovered: false
+    property var rootText: ({})
+    // Figures of one width in every label (the bar's clock and readouts).
+    property bool tabular: false
 
     // A view with this kind of tree replaced the old one (the item was sent again).
     property int generation: 0

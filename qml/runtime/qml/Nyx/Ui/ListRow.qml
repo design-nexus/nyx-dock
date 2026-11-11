@@ -24,6 +24,11 @@ Rectangle {
     radius: Style.radiusSmall
     color: selected ? Style.selected : (interactive && (hovered || activeFocus)) ? Style.rowHover : "transparent"
     activeFocusOnTab: interactive
+    Accessible.role: Accessible.ListItem
+    Accessible.name: subtitle !== "" ? title + ", " + subtitle : title
+    Accessible.selectable: interactive
+    Accessible.selected: selected
+    Accessible.onPressAction: clicked()
     onActiveFocusChanged: if (activeFocus) focusReason = area.pressed ? Qt.MouseFocusReason : Qt.TabFocusReason
 
     Behavior on color {

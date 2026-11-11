@@ -99,6 +99,44 @@ Singleton {
     /// After a new generation is applied.
     signal changed(int generation)
 
+    /// Goes up when the icon theme in use is redrawn under the same names (Umbra in a new
+    /// theme's colours, by nyx-themed or Omarchy's hook), so icons fetch their pictures
+    /// again: QML's image cache would keep the old ones.
+    property int iconGeneration: 0
+    readonly property string iconTheme: Quickshell.env("QS_ICON_THEME") || "Umbra"
+    /// Umbra writes its palette here with every build (the whole folder is swapped in).
+    readonly property string iconStampPath: (Quickshell.env("XDG_DATA_HOME") || Quickshell.env("HOME") + "/.local/share") + "/icons/" + iconTheme + "/umbra.json"
+    property string _iconStamp: ""
+
+    onChanged: { iconWatch.tries = 0; iconWatch.restart() }
+
+    FileView {
+        id: iconStamp
+        path: root.iconStampPath
+        printErrors: false
+        onLoaded: {
+            const t = text()
+            if (root._iconStamp !== "" && t !== root._iconStamp)
+                root.iconGeneration++
+            root._iconStamp = t
+        }
+    }
+
+    // A theme change starts the redraw; look for it for half a minute after.
+    Timer {
+        id: iconWatch
+        property int tries: 0
+        interval: 1500
+        repeat: true
+        onTriggered: {
+            iconStamp.reload()
+            if (++tries >= 20)
+                stop()
+        }
+    }
+
+    Component.onCompleted: iconStamp.reload()
+
     function nest(flat) {
         var out = {}
         for (var key in flat) {

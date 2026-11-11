@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Effects
 import Quickshell
+import Nyx.Theme
 
 // An icon by icon-theme name or file path. Symbolic icons (names ending in
 // `-symbolic`, or `recolor: true`) are drawn in `color`, as GTK draws them in
@@ -44,8 +45,18 @@ Item {
         smooth: true
         mipmap: true
         asynchronous: true
-        cache: true
+        // Once the icon theme has been redrawn the cached pictures are stale.
+        cache: NyxTheme.iconGeneration === 0
         visible: !icon.recolor
+    }
+    Connections {
+        target: NyxTheme
+        function onIconGenerationChanged() {
+            if (!icon.source.startsWith("image://icon/"))
+                return;
+            img.source = "";
+            img.source = Qt.binding(() => icon.source);
+        }
     }
 
     MultiEffect {

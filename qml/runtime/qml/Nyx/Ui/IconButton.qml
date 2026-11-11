@@ -23,6 +23,11 @@ Rectangle {
     implicitHeight: Style.iconButton
     radius: Style.radiusSmall
     activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: tooltip
+    Accessible.checkable: toggled
+    Accessible.checked: toggled
+    Accessible.onPressAction: clicked()
     onActiveFocusChanged: if (activeFocus) focusReason = area.pressed ? Qt.MouseFocusReason : Qt.TabFocusReason
     color: primary ? Style.accent : toggled ? Style.alpha(Style.accent, 0.18) : (hovered || activeFocus) ? (danger ? Style.alpha(Style.danger, 0.16) : Style.rowHover) : "transparent"
     opacity: enabled ? 1 : 0.45

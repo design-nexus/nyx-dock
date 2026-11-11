@@ -57,6 +57,9 @@ Rectangle {
         font.pixelSize: Style.body
         clip: true
         echoMode: f.password ? TextInput.Password : TextInput.Normal
+        Accessible.role: Accessible.EditableText
+        Accessible.name: f.placeholder
+        Accessible.passwordEdit: f.password
         onAccepted: f.accepted()
         Keys.onEscapePressed: e => {
             if (input.text !== "") {

@@ -28,7 +28,7 @@ Item {
         antialiasing: true
 
         function css(c) {
-            const col = Style.token(c);
+            const col = Style.toColor(Style.token(c));
             return "rgba(" + Math.round(col.r * 255) + "," + Math.round(col.g * 255) + "," + Math.round(col.b * 255) + "," + col.a + ")";
         }
         function brush(ctx, p) {

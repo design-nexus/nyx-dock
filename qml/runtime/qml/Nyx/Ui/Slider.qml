@@ -38,6 +38,11 @@ Item {
     implicitHeight: 32
     implicitWidth: 200
     activeFocusOnTab: true
+    Accessible.role: Accessible.Slider
+    Accessible.name: iconTooltip
+    Accessible.description: Math.round(live) + ""
+    Accessible.onIncreaseAction: nudge(Math.max(step, (to - from) / 20))
+    Accessible.onDecreaseAction: nudge(-Math.max(step, (to - from) / 20))
     onActiveFocusChanged: if (activeFocus) focusReason = area.pressed ? Qt.MouseFocusReason : Qt.TabFocusReason
 
     IconButton {

@@ -3,19 +3,30 @@ import QtQuick.Layouts
 import Quickshell.Widgets
 import Nyx.Ui
 import "markup.js" as Markup
+import "style.js" as Css
 
 // One node of a plugin view and, through Loaders, its children. `node` is the node as
 // sent; patches change `base`; `p` is what is drawn (base plus the hover and pressed
 // property sets while they apply). Children come from the node as sent: patches
 // never change them.
+//
+// With style rules (`ctx.rules`: a host's classes and the plugin's style.css, see
+// style.js), a node takes the properties of the rules that match it and its ancestors:
+// padding, margins, minimum sizes, background, corners, an inset ring, a top border,
+// opacity, and the text's colour, size, weight and spacing (those four pass down to
+// children, as in CSS).
 Item {
     id: n
 
     property var ctx: null
     property var node: ({})
+    // The parent node, for selectors that name ancestors.
+    property var up: null
     property var base: node
     property bool hov: false
     property bool prs: false
+    // Under the pointer, for :hover rules.
+    property bool hovering: false
     readonly property var p: {
         let out = base || {};
         if (hov && out.hover)
@@ -26,15 +37,55 @@ Item {
     }
     readonly property string kind: (node && node.node) || "box"
     readonly property var kids: node ? (node.children || (node.child ? [node.child] : [])) : []
-    readonly property var m: (p.margin && p.margin.length === 4) ? p.margin : [0, 0, 0, 0]
     readonly property var classes: p["class"] || []
 
     function has(c) {
         return classes.indexOf(c) >= 0;
     }
+
+    // The node, its ancestors and the host's root, for the rules.
+    function chain() {
+        const out = [{ kind: kind, classes: classes, hovered: hovering }];
+        for (let x = up; x; x = x.up)
+            out.push({ kind: x.kind, classes: x.classes, hovered: x.hovering });
+        out.push({ root: true, classes: ctx ? (ctx.rootClasses || []) : [], hovered: ctx ? !!ctx.rootHovered : false });
+        return out;
+    }
+    readonly property bool styled: !!(ctx && ctx.rules && ctx.rules.length)
+    readonly property var st: styled ? Css.compute(ctx.rules, chain()) : ({})
+    function side(key, i) {
+        const one = st[key + ["-top", "-right", "-bottom", "-left"][i]];
+        if (one !== undefined)
+            return one;
+        return st[key] ? st[key][i] : 0;
+    }
+    readonly property var pad: [side("padding", 0), side("padding", 1), side("padding", 2), side("padding", 3)]
+    readonly property var m: {
+        const own = (p.margin && p.margin.length === 4) ? p.margin : [0, 0, 0, 0];
+        return [own[0] + side("margin", 0), own[1] + side("margin", 1), own[2] + side("margin", 2), own[3] + side("margin", 3)];
+    }
+    function cssColor(c) {
+        return PluginStyle.color(c);
+    }
+    // What passes down: colour and text settings, the parent's then this node's.
+    readonly property var inherited: up ? up.passed : (ctx && ctx.rootText ? ctx.rootText : ({}))
+    readonly property var passed: {
+        const out = Object.assign({}, inherited);
+        for (const k of ["color", "font-size", "font-weight", "letter-spacing"])
+            if (st[k] !== undefined)
+                out[k] = st[k];
+        return out;
+    }
+    readonly property real textSize: p.font_size > 0 ? p.font_size : (passed["font-size"] || Style.body)
+    readonly property int textWeight: passed["font-weight"] || 400
+    readonly property real textSpacing: passed["letter-spacing"] || 0
     readonly property color fg: {
         if (p.color)
             return Style.token(p.color);
+        if (passed.color)
+            return cssColor(passed.color);
+        if (styled)
+            return Style.text;
         if (has("danger") || has("urgent"))
             return Style.danger;
         if (has("warning"))
@@ -65,22 +116,47 @@ Item {
         ctx.unregister(node.id, n)
 
     visible: p.visible !== false
-    implicitWidth: (p.width > 0 ? p.width : (content.item ? content.item.implicitWidth : 0)) + m[1] + m[3]
-    implicitHeight: Math.min(ctx && ctx.maxHeight > 0 ? ctx.maxHeight : 1e9, (p.height > 0 ? p.height : (content.item ? content.item.implicitHeight : 0)) + m[0] + m[2])
+    opacity: st.opacity !== undefined ? st.opacity : 1
+    // As in GTK: a node's width and height are its smallest size, padding included (not
+    // its margins), and it grows to fit what it holds; CSS min sizes leave the padding out.
+    // A drawing, picture or graph is exactly the size it asks for.
+    readonly property bool exact: ["graph", "vector", "image", "frame", "spinner", "progress"].indexOf(kind) >= 0
+    readonly property real innerW: exact && p.width > 0 ? p.width - pad[1] - pad[3] : Math.max(p.width > 0 ? p.width - pad[1] - pad[3] : 0, st["min-width"] || 0, content.item ? content.item.implicitWidth : 0)
+    readonly property real innerH: exact && p.height > 0 ? p.height - pad[0] - pad[2] : Math.max(p.height > 0 ? p.height - pad[0] - pad[2] : 0, st["min-height"] || 0, content.item ? content.item.implicitHeight : 0)
+    implicitWidth: innerW + pad[1] + pad[3] + m[1] + m[3]
+    implicitHeight: Math.min(ctx && ctx.maxHeight > 0 ? ctx.maxHeight : 1e9, innerH + pad[0] + pad[2] + m[0] + m[2])
 
     Rectangle {
-        anchors.fill: parent
-        visible: !!n.p.background
-        color: Style.token(n.p.background)
-        radius: Style.radiusSmall
-    }
-
-    Loader {
-        id: content
         x: n.m[3]
         y: n.m[0]
         width: n.width - n.m[1] - n.m[3]
         height: n.height - n.m[0] - n.m[2]
+        readonly property var ring: n.st.ring && !n.st.ring.none ? n.st.ring : (n.st.border || null)
+        visible: !!n.p.background || !!n.st["background-color"] || !!ring
+        color: n.p.background ? Style.token(n.p.background) : n.cssColor(n.st["background-color"])
+        radius: n.st["border-radius"] !== undefined ? n.st["border-radius"] : (n.p.background ? Style.radiusSmall : 0)
+        border.width: ring ? ring.w : 0
+        border.color: ring ? n.cssColor(ring.c) : "transparent"
+        Rectangle {
+            visible: !!n.st["border-top"]
+            width: parent.width
+            height: n.st["border-top"] ? n.st["border-top"].w : 0
+            color: n.st["border-top"] ? n.cssColor(n.st["border-top"].c) : "transparent"
+        }
+        Rectangle {
+            visible: !!n.st["border-left"]
+            width: n.st["border-left"] ? n.st["border-left"].w : 0
+            height: parent.height
+            color: n.st["border-left"] ? n.cssColor(n.st["border-left"].c) : "transparent"
+        }
+    }
+
+    Loader {
+        id: content
+        x: n.m[3] + n.pad[3]
+        y: n.m[0] + n.pad[0]
+        width: n.width - n.m[1] - n.m[3] - n.pad[1] - n.pad[3]
+        height: n.height - n.m[0] - n.m[2] - n.pad[0] - n.pad[2]
         sourceComponent: ({
                 box: boxC, overlay: overlayC, stack: stackC, label: labelC, icon: iconC, image: imageC,
                 badge: badgeC, progress: progressC, graph: graphC, spinner: spinnerC, vector: vectorC,
@@ -92,6 +168,16 @@ Item {
     HoverHandler {
         enabled: !!(n.base && (n.base.hover || n.base.pressed))
         onHoveredChanged: n.hov = hovered
+    }
+    HoverHandler {
+        enabled: n.styled && !!n.ctx.hoverRules
+        onHoveredChanged: n.hovering = hovered
+    }
+    // Any node with an action is clickable, as a button is.
+    TapHandler {
+        enabled: !!n.p.action && n.kind !== "button" && n.kind !== "row"
+        cursorShape: Qt.PointingHandCursor
+        onTapped: n.ctx.emit("action", n.p.action, null)
     }
     PointHandler {
         enabled: !!(n.base && n.base.pressed)
@@ -119,23 +205,33 @@ Item {
         Layout.alignment: horizontal ? ({ start: Qt.AlignTop, end: Qt.AlignBottom })[align] || Qt.AlignVCenter : ({ start: Qt.AlignLeft, end: Qt.AlignRight })[align] || Qt.AlignHCenter
         Layout.preferredWidth: item ? item.implicitWidth : 0
         Layout.preferredHeight: item ? item.implicitHeight : 0
-        Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: modelData })
+        Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: modelData, up: n })
     }
 
     Component {
         id: boxC
-        GridLayout {
-            readonly property bool horizontal: n.p.orientation !== "vertical"
-            flow: horizontal ? GridLayout.LeftToRight : GridLayout.TopToBottom
-            rows: horizontal ? 1 : -1
-            columns: horizontal ? -1 : 1
-            rowSpacing: n.p.spacing !== undefined ? n.p.spacing : 4
-            columnSpacing: rowSpacing
-            Repeater {
-                model: n.kids
-                delegate: Child {
-                    horizontal: parent.horizontal
-                    align: n.p.align || "center"
+        Item {
+            implicitWidth: grid.implicitWidth
+            implicitHeight: grid.implicitHeight
+            // A row wider than its children keeps them at its start, as GTK packs them,
+            // unless one expands to take the room.
+            readonly property bool packs: grid.horizontal && !n.kids.some(k => k.expand)
+            GridLayout {
+                id: grid
+                readonly property bool horizontal: n.p.orientation !== "vertical"
+                width: parent.packs ? Math.min(parent.width, implicitWidth) : parent.width
+                height: parent.height
+                flow: horizontal ? GridLayout.LeftToRight : GridLayout.TopToBottom
+                rows: horizontal ? 1 : -1
+                columns: horizontal ? -1 : 1
+                rowSpacing: n.p.spacing !== undefined ? n.p.spacing : 4
+                columnSpacing: rowSpacing
+                Repeater {
+                    model: n.kids
+                    delegate: Child {
+                        horizontal: grid.horizontal
+                        align: n.p.align || "center"
+                    }
                 }
             }
         }
@@ -155,7 +251,7 @@ Item {
                     width: modelData.expand || index === 0 ? parent.width : (item ? item.implicitWidth : 0)
                     height: modelData.expand || index === 0 ? parent.height : (item ? item.implicitHeight : 0)
                     required property int index
-                    Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: modelData })
+                    Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: modelData, up: n })
                 }
             }
         }
@@ -184,7 +280,7 @@ Item {
                             duration: Style.normal
                         }
                     }
-                    Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: modelData })
+                    Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: modelData, up: n })
                 }
             }
         }
@@ -197,8 +293,10 @@ Item {
         // A Text that elides reports no natural width once it is given none, so the
         // natural size comes from an unconstrained copy.
         Item {
+            // Out of the bar a long label wraps onto more lines, as in GTK.
+            readonly property bool wraps: !(n.ctx && n.ctx.maxHeight > 0)
             implicitWidth: natural.implicitWidth
-            implicitHeight: natural.implicitHeight
+            implicitHeight: wraps ? shown.implicitHeight : natural.implicitHeight
             Label {
                 id: natural
                 visible: false
@@ -210,7 +308,9 @@ Item {
             }
             Label {
                 id: shown
-                anchors.fill: parent
+                width: parent.width
+                height: parent.wraps ? Math.max(implicitHeight, parent.height) : parent.height
+                wrapMode: parent.wraps ? Text.Wrap : Text.NoWrap
                 text: n.p.markup ? Markup.toStyled(n.p.text || "", c => {
                     const col = Style.token(c);
                     return col === "transparent" ? "" : col.toString();
@@ -218,8 +318,12 @@ Item {
                 textFormat: n.p.markup ? Text.StyledText : Text.PlainText
                 // StyledText has no font face: a label all in <tt> takes the monospace one.
                 font.family: n.p.markup && /^\s*<tt>[\s\S]*<\/tt>\s*$/.test(n.p.text || "") ? Style.mono : Style.font
+                font.weight: n.textWeight
+                font.letterSpacing: n.textSpacing
+                font.features: n.ctx && n.ctx.tabular ? ({ "tnum": 1 }) : ({})
                 color: n.fg
-                size: n.p.font_size > 0 ? n.p.font_size : Style.body
+                size: n.textSize
+                horizontalAlignment: n.has("center") ? Text.AlignHCenter : Text.AlignLeft
                 elide: Text.ElideRight
                 // A plugin's line breaks stand, as in GTK; long lines still elide.
                 maximumLineCount: 1000
@@ -230,10 +334,11 @@ Item {
     Component {
         id: iconC
         Icon {
-            name: n.p.name || ""
-            size: n.p.size > 0 ? n.p.size : 16
+            name: PluginStyle.icon(n.p.name)
+            size: n.p.size > 0 ? n.p.size : (n.st["icon-size"] || 16)
             recolor: name.endsWith("-symbolic") || !!n.p.color
             color: n.fg
+            rotation: n.st.rotate || 0
         }
     }
 
@@ -308,8 +413,8 @@ Item {
                         ctx.fillRect(i * bw + 0.5, h - bh, Math.max(1, bw - 1), bh);
                     }
                 } else {
-                    ctx.strokeStyle = tint;
-                    ctx.lineWidth = 1.5;
+                    // The line, and under it the same colour at 18 %, as the GTK view draws it.
+                    ctx.lineWidth = 1.4;
                     ctx.lineJoin = "round";
                     ctx.beginPath();
                     for (let i = 0; i < v.length; i++) {
@@ -320,7 +425,13 @@ Item {
                         else
                             ctx.lineTo(x, y);
                     }
+                    ctx.strokeStyle = tint;
                     ctx.stroke();
+                    ctx.lineTo(w, h);
+                    ctx.lineTo(0, h);
+                    ctx.closePath();
+                    ctx.fillStyle = Qt.rgba(tint.r, tint.g, tint.b, 0.18);
+                    ctx.fill();
                 }
             }
         }
@@ -391,13 +502,49 @@ Item {
     Component {
         id: buttonC
         Loader {
-            sourceComponent: n.p.label ? textButton : iconButton
+            // With style rules the CSS draws the button (its padding, background, the
+            // hover); this is only its icon and label, and the click.
+            sourceComponent: n.styled ? cssButton : n.p.label ? textButton : iconButton
+            Component {
+                id: cssButton
+                Item {
+                    implicitWidth: row.implicitWidth
+                    implicitHeight: Math.max(row.implicitHeight, 16)
+                    Row {
+                        id: row
+                        anchors.centerIn: parent
+                        spacing: 6
+                        Icon {
+                            visible: !!n.p.icon
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: PluginStyle.icon(n.p.icon)
+                            size: n.st["icon-size"] || 16
+                            recolor: true
+                            color: n.fg
+                        }
+                        Label {
+                            visible: !!n.p.label
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: n.p.label || ""
+                            color: n.fg
+                            size: n.textSize
+                            font.weight: n.textWeight
+                            font.underline: n.has("link") && n.hovering
+                        }
+                    }
+                    TapHandler {
+                        cursorShape: Qt.PointingHandCursor
+                        onTapped: n.ctx.emit("action", n.p.action || n.p.id || "", null)
+                    }
+                }
+            }
             Component {
                 id: textButton
                 Button {
                     text: n.p.label || ""
                     icon: n.p.icon || ""
                     primary: n.has("accent") || n.has("suggested")
+                    toggled: n.has("active")
                     danger: n.has("danger")
                     confirm: false
                     onClicked: n.ctx.emit("action", n.p.action || n.p.id || "", null)
@@ -406,7 +553,7 @@ Item {
             Component {
                 id: iconButton
                 IconButton {
-                    icon: n.p.icon || ""
+                    icon: PluginStyle.icon(n.p.icon)
                     toggled: n.has("active")
                     onClicked: n.ctx.emit("action", n.p.action || n.p.id || "", null)
                 }
@@ -430,6 +577,8 @@ Item {
         Separator {
             implicitWidth: 1
             implicitHeight: 1
+            // Styled, the node's own background is the line.
+            visible: !n.st["background-color"]
         }
     }
 
@@ -448,7 +597,7 @@ Item {
                 width: fl.width
                 height: item ? item.implicitHeight : 0
                 Component.onCompleted: if (n.kids.length)
-                    setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: n.kids[0] })
+                    setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: n.kids[0], up: n })
             }
         }
     }

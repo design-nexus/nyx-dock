@@ -17,6 +17,7 @@ Rectangle {
     radius: Style.radiusSmall
     color: Style.field
     activeFocusOnTab: true
+    Accessible.role: Accessible.PageTabList
 
     Row {
         id: row
@@ -29,6 +30,10 @@ Rectangle {
                 id: opt
                 required property var modelData
                 readonly property bool on: modelData.id === seg.current
+                Accessible.role: Accessible.PageTab
+                Accessible.name: modelData.label || ""
+                Accessible.selected: on
+                Accessible.onPressAction: seg.chosen(modelData.id)
                 height: row.height
                 width: Math.max(56, (seg.width - 4 - (seg.options.length - 1) * 2) / Math.max(1, seg.options.length))
                 radius: Style.radiusSmall - 2
