@@ -32,10 +32,35 @@ Item {
     property var rootText: ({})
     // Figures of one width in every label (the bar's clock and readouts).
     property bool tabular: false
+    // Nodes' tooltips open below them (a bar along the top of the screen).
+    property bool tipBelow: false
+    // Nodes with a tooltip under the pointer now.
+    property int tipHovers: 0
+    // How much of the spare width of labels marked `shrink` to give up, 0 to 1, and that
+    // spare width in all.
+    property real squeeze: 0
+    property real spare: 0
+    property var _spares: []
+    function setSpare(obj, v) {
+        const list = _spares.filter(e => e.o !== obj);
+        if (v > 0)
+            list.push({ o: obj, v: v });
+        _spares = list;
+        spare = list.reduce((a, e) => a + e.v, 0);
+    }
 
-    // A view with this kind of tree replaced the old one (the item was sent again).
+    // A view of another shape replaced the old one: its nodes are built anew. A view of
+    // the same shape (the item sent again with new values) updates them in place, so
+    // icons don't blink, sliders keep their drag and scrolled lists their place.
     property int generation: 0
+    property string _shape: ""
     property var _ids: ({})
+    function shape(v) {
+        if (!v)
+            return "";
+        const kids = v.children || (v.child ? [v.child] : []);
+        return (v.node || "box") + "#" + (v.id || "") + "(" + kids.map(shape).join(",") + ")";
+    }
 
     signal viewEvent(string kind, string control, var value)
 
@@ -60,6 +85,10 @@ Item {
     }
 
     onViewChanged: {
+        const sh = shape(view);
+        if (sh === _shape)
+            return;
+        _shape = sh;
         _ids = {};
         generation += 1;
     }

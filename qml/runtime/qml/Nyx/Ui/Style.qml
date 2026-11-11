@@ -80,7 +80,9 @@ Singleton {
             bg: bg, surface: surface, text: text, dim_text: dimText, accent: accent, on_accent: onAccent,
             border: border, muted: muted, highlight: c("highlight", "#313244"), danger: danger, panel: panel,
             card: card, raised: raised, popover: popover, text_tertiary: tertiary, divider: divider,
-            warning: warning, success: success, hover: rowHover, field: field, track: track, hairline: hairline
+            warning: warning, success: success, hover: rowHover, field: field, track: track, hairline: hairline,
+            shadow: shadow, nav_active: selected, row_hover: rowHover, lift: card, lift_active: liftActive, veil: veil,
+            focus: focus
         }[name];
         return t !== undefined ? t : "transparent";
     }

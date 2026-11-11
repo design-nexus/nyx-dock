@@ -13,9 +13,9 @@ import "style.js" as Css
 //
 // With style rules (`ctx.rules`: a host's classes and the plugin's style.css, see
 // style.js), a node takes the properties of the rules that match it and its ancestors:
-// padding, margins, minimum sizes, background, corners, an inset ring, a top border,
-// opacity, and the text's colour, size, weight and spacing (those four pass down to
-// children, as in CSS).
+// padding, margins, minimum sizes, background, corners, an inset ring, one-sided
+// borders, opacity, the text's colour, size, weight and spacing, and the icon size
+// (those five pass down to children, as in CSS).
 Item {
     id: n
 
@@ -68,11 +68,11 @@ Item {
     function cssColor(c) {
         return PluginStyle.color(c);
     }
-    // What passes down: colour and text settings, the parent's then this node's.
+    // What passes down: colour, text settings and icon size, the parent's then this node's.
     readonly property var inherited: up ? up.passed : (ctx && ctx.rootText ? ctx.rootText : ({}))
     readonly property var passed: {
         const out = Object.assign({}, inherited);
-        for (const k of ["color", "font-size", "font-weight", "letter-spacing"])
+        for (const k of ["color", "font-size", "font-weight", "letter-spacing", "icon-size"])
             if (st[k] !== undefined)
                 out[k] = st[k];
         return out;
@@ -111,10 +111,32 @@ Item {
         base = b;
     }
 
-    Component.onCompleted: if (ctx && node && node.id)
-        ctx.register(node.id, n)
-    Component.onDestruction: if (ctx && node && node.id)
-        ctx.unregister(node.id, n)
+    // A view sent again with the same shape gives this node its new values; a patch since
+    // set `base` itself, so the binding above no longer carries them.
+    // Patches find nodes by id. A node usually gets its slot after it's created.
+    property string registered: ""
+    function register() {
+        const id = node && node.id ? node.id : "";
+        if (id === registered || !ctx)
+            return;
+        if (registered)
+            ctx.unregister(registered, n);
+        registered = id;
+        if (id)
+            ctx.register(id, n);
+    }
+    onNodeChanged: {
+        base = node;
+        register();
+    }
+
+    Component.onCompleted: register()
+    Component.onDestruction: {
+        if (ctx && registered)
+            ctx.unregister(registered, n);
+        if (tipHover.counted && ctx)
+            ctx.tipHovers = Math.max(0, ctx.tipHovers - 1);
+    }
 
     visible: p.visible !== false
     opacity: st.opacity !== undefined ? st.opacity : 1
@@ -133,22 +155,25 @@ Item {
         width: n.width - n.m[1] - n.m[3]
         height: n.height - n.m[0] - n.m[2]
         readonly property var ring: n.st.ring && !n.st.ring.none ? n.st.ring : (n.st.border || null)
-        visible: !!n.p.background || !!n.st["background-color"] || !!ring
+        readonly property bool edged: !!(n.st["border-top"] || n.st["border-right"] || n.st["border-bottom"] || n.st["border-left"])
+        visible: !!n.p.background || !!n.st["background-color"] || !!ring || edged
         color: n.p.background ? Style.token(n.p.background) : n.cssColor(n.st["background-color"])
         radius: n.st["border-radius"] !== undefined ? n.st["border-radius"] : (n.p.background ? Style.radiusSmall : 0)
         border.width: ring ? ring.w : 0
         border.color: ring ? n.cssColor(ring.c) : "transparent"
-        Rectangle {
-            visible: !!n.st["border-top"]
-            width: parent.width
-            height: n.st["border-top"] ? n.st["border-top"].w : 0
-            color: n.st["border-top"] ? n.cssColor(n.st["border-top"].c) : "transparent"
-        }
-        Rectangle {
-            visible: !!n.st["border-left"]
-            width: n.st["border-left"] ? n.st["border-left"].w : 0
-            height: parent.height
-            color: n.st["border-left"] ? n.cssColor(n.st["border-left"].c) : "transparent"
+        // One-sided borders, and inset shadows on one side (`inset 0 -2px 0 c`).
+        Repeater {
+            model: ["top", "right", "bottom", "left"]
+            Rectangle {
+                required property string modelData
+                readonly property var e: n.st["border-" + modelData] || null
+                visible: !!e
+                x: modelData === "right" ? parent.width - width : 0
+                y: modelData === "bottom" ? parent.height - height : 0
+                width: modelData === "top" || modelData === "bottom" ? parent.width : (e ? e.w : 0)
+                height: modelData === "left" || modelData === "right" ? parent.height : (e ? e.w : 0)
+                color: e ? n.cssColor(e.c) : "transparent"
+            }
         }
     }
 
@@ -177,6 +202,9 @@ Item {
     // Any node with an action is clickable, as a button is.
     TapHandler {
         enabled: !!n.p.action && n.kind !== "button" && n.kind !== "row"
+        // Takes the press at once, so a host's click handling under the view (a bar
+        // item's) doesn't also act on it.
+        gesturePolicy: TapHandler.WithinBounds
         cursorShape: Qt.PointingHandCursor
         onTapped: n.ctx.emit("action", n.p.action, null)
     }
@@ -189,26 +217,41 @@ Item {
         target: n
         text: n.p.tooltip || ""
         shown: !!n.p.tooltip && tipHover.hovered
+        below: !!(n.ctx && n.ctx.tipBelow)
     }
+    // The view counts the nodes with a tooltip under the pointer, so the host's own tip
+    // (a bar item's) can give way: one tip at a time.
     HoverHandler {
         id: tipHover
         enabled: !!n.p.tooltip
+        property bool counted: false
+        onHoveredChanged: {
+            if (hovered !== counted && n.ctx) {
+                counted = hovered;
+                n.ctx.tipHovers = Math.max(0, n.ctx.tipHovers + (hovered ? 1 : -1));
+            }
+        }
     }
+
 
     // Children ------------------------------------------------------------------
 
+    // A child keeps a binding to its place in the parent's node, so a view sent again
+    // with the same shape updates the nodes in place instead of building them anew.
     component Child: Loader {
-        required property var modelData
+        required property int index
+        readonly property var slot: n.kids[index] || ({})
         property bool horizontal: true
         property string align: "center"
         // A hidden node takes no room or spacing in its box.
-        visible: modelData.visible !== false
-        Layout.fillWidth: horizontal ? !!modelData.expand : (align === "fill" && !(modelData.width > 0))
-        Layout.fillHeight: horizontal ? (align === "fill" && !(modelData.height > 0)) : !!modelData.expand
+        visible: slot.visible !== false
+        Layout.fillWidth: horizontal ? !!slot.expand : (align === "fill" && !(slot.width > 0))
+        Layout.fillHeight: horizontal ? (align === "fill" && !(slot.height > 0)) : !!slot.expand
         Layout.alignment: horizontal ? ({ start: Qt.AlignTop, end: Qt.AlignBottom })[align] || Qt.AlignVCenter : ({ start: Qt.AlignLeft, end: Qt.AlignRight })[align] || Qt.AlignHCenter
         Layout.preferredWidth: item ? item.implicitWidth : 0
         Layout.preferredHeight: item ? item.implicitHeight : 0
-        Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: modelData, up: n })
+        Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: slot, up: n })
+        onLoaded: item.node = Qt.binding(() => n.kids[index] || ({}))
     }
 
     Component {
@@ -230,7 +273,7 @@ Item {
                 rowSpacing: n.p.spacing !== undefined ? n.p.spacing : 4
                 columnSpacing: rowSpacing
                 Repeater {
-                    model: n.kids
+                    model: n.kids.length
                     delegate: Child {
                         horizontal: grid.horizontal
                         align: n.p.align || "center"
@@ -247,14 +290,15 @@ Item {
             implicitHeight: Math.max(0, ...Array.from({ length: rep.count }, (_, i) => rep.itemAt(i) ? rep.itemAt(i).implicitHeight : 0))
             Repeater {
                 id: rep
-                model: n.kids
+                model: n.kids.length
                 delegate: Loader {
-                    required property var modelData
-                    anchors.centerIn: parent
-                    width: modelData.expand || index === 0 ? parent.width : (item ? item.implicitWidth : 0)
-                    height: modelData.expand || index === 0 ? parent.height : (item ? item.implicitHeight : 0)
                     required property int index
-                    Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: modelData, up: n })
+                    readonly property var slot: n.kids[index] || ({})
+                    anchors.centerIn: parent
+                    width: slot.expand || index === 0 ? parent.width : (item ? item.implicitWidth : 0)
+                    height: slot.expand || index === 0 ? parent.height : (item ? item.implicitHeight : 0)
+                    Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: slot, up: n })
+                    onLoaded: item.node = Qt.binding(() => n.kids[index] || ({}))
                 }
             }
         }
@@ -269,11 +313,11 @@ Item {
             implicitHeight: Math.max(0, ...Array.from({ length: srep.count }, (_, i) => srep.itemAt(i) ? srep.itemAt(i).implicitHeight : 0))
             Repeater {
                 id: srep
-                model: n.kids
+                model: n.kids.length
                 delegate: Loader {
-                    required property var modelData
                     required property int index
-                    readonly property bool current: (modelData.id || "") === stack.show || (stack.show === "" && index === 0)
+                    readonly property var slot: n.kids[index] || ({})
+                    readonly property bool current: (slot.id || "") === stack.show || (stack.show === "" && index === 0)
                     anchors.fill: parent
                     opacity: current ? 1 : 0
                     visible: opacity > 0
@@ -283,7 +327,8 @@ Item {
                             duration: Style.normal
                         }
                     }
-                    Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: modelData, up: n })
+                    Component.onCompleted: setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: slot, up: n })
+                    onLoaded: item.node = Qt.binding(() => n.kids[index] || ({}))
                 }
             }
         }
@@ -296,9 +341,19 @@ Item {
         // A Text that elides reports no natural width once it is given none, so the
         // natural size comes from an unconstrained copy.
         Item {
+            id: lab
             // Out of the bar a long label wraps onto more lines, as in GTK.
             readonly property bool wraps: !(n.ctx && n.ctx.maxHeight > 0)
-            implicitWidth: natural.implicitWidth
+            // Marked `shrink` (a title), it gives up all but 48 px when the bar is short
+            // of room (`ctx.squeeze`, a share of every such label's spare width).
+            readonly property real spare: !wraps && n.ctx && n.has("shrink") ? Math.max(0, natural.implicitWidth - 48) : 0
+            onSpareChanged: if (n.ctx)
+                n.ctx.setSpare(lab, spare)
+            Component.onCompleted: if (n.ctx && spare > 0)
+                n.ctx.setSpare(lab, spare)
+            Component.onDestruction: if (n.ctx)
+                n.ctx.setSpare(lab, 0)
+            implicitWidth: natural.implicitWidth - (spare > 0 ? spare * Math.min(1, n.ctx.squeeze) : 0)
             implicitHeight: wraps ? shown.implicitHeight : natural.implicitHeight
             Label {
                 id: natural
@@ -338,7 +393,7 @@ Item {
         id: iconC
         Icon {
             name: PluginStyle.icon(n.p.name)
-            size: n.p.size > 0 ? n.p.size : (n.st["icon-size"] || 16)
+            size: n.p.size > 0 ? n.p.size : (n.passed["icon-size"] || 16)
             recolor: name.endsWith("-symbolic") || !!n.p.color
             color: n.fg
             rotation: n.st.rotate || 0
@@ -350,7 +405,7 @@ Item {
     Component {
         id: monoC
         MonoTint {
-            size: n.kind === "icon" ? (n.p.size > 0 ? n.p.size : (n.st["icon-size"] || 16)) : (n.p.width || 16)
+            size: n.kind === "icon" ? (n.p.size > 0 ? n.p.size : (n.passed["icon-size"] || 16)) : (n.p.width || 16)
             color: n.fg
             source: {
                 if (n.kind === "image")
@@ -537,7 +592,7 @@ Item {
                             visible: !!n.p.icon
                             anchors.verticalCenter: parent.verticalCenter
                             name: PluginStyle.icon(n.p.icon)
-                            size: n.st["icon-size"] || 16
+                            size: n.passed["icon-size"] || 16
                             recolor: true
                             color: n.fg
                         }
@@ -617,6 +672,7 @@ Item {
                 height: item ? item.implicitHeight : 0
                 Component.onCompleted: if (n.kids.length)
                     setSource(Qt.resolvedUrl("PluginNode.qml"), { ctx: n.ctx, node: n.kids[0], up: n })
+                onLoaded: item.node = Qt.binding(() => n.kids[0] || ({}))
             }
         }
     }
