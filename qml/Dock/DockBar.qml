@@ -54,7 +54,7 @@ Rectangle {
     }
 
     HoverHandler {
-        onHoveredChanged: bar.w.hovered = hovered
+        onHoveredChanged: bar.w.barHovered = hovered
     }
     function openMenu() {
         menu.open();

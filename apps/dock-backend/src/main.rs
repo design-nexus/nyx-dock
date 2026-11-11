@@ -923,9 +923,12 @@ fn main() -> std::process::ExitCode {
         saving: Cell::new(false),
         publish_pending: Cell::new(false),
     });
-    // The theme snapshot for Quickshell parts, where no theme service runs.
-    nyx_theme_core::notify_changed("system", "shell");
-    files::follow_theme();
+    // The theme snapshot for Quickshell parts, where no theme service runs. A test copy
+    // (NYX_DOCK_ONLY) shows its own settings and mustn't publish them for the desktop.
+    if only.is_none() {
+        nyx_theme_core::notify_changed("system", "shell");
+        files::follow_theme();
+    }
 
     let ws = Rc::downgrade(&s);
     std::mem::forget(watch::watch_local(move |u| {

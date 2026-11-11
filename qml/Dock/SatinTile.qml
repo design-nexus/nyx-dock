@@ -1,8 +1,9 @@
 import QtQuick
 import Quickshell
 import Nyx.Ui
+import Nyx.Theme
 
-// The Apps button and the Trash: a satin tile like the app icons, from the theme.
+// The Apps button and the Trash: Design 2.0 tiles like the app icons, from the theme.
 Item {
     id: t
 
@@ -22,10 +23,26 @@ Item {
         border.width: drop.containsDrag ? 2 : 0
         border.color: Style.accent
     }
-    // A soft square with a hairline and a glyph: the Apps button in the accent, the
-    // Trash muted until it holds something.
-    Rectangle {
-        readonly property bool apps: t.kind === "apps"
+    // A Design 2.0 tile like the app icons beside it: the Apps button in the accent, the
+    // Trash in graphite, lighter while it holds something.
+    function square(x, y, s, r) {
+        return "M" + (x + r) + " " + y + "h" + (s - 2 * r) + "a" + r + " " + r + " 0 0 1 " + r + " " + r + "v" + (s - 2 * r)
+            + "a" + r + " " + r + " 0 0 1 -" + r + " " + r + "h-" + (s - 2 * r) + "a" + r + " " + r + " 0 0 1 -" + r + " -" + r
+            + "v-" + (s - 2 * r) + "a" + r + " " + r + " 0 0 1 " + r + " -" + r + "z";
+    }
+    readonly property var appsGlyph: ({
+        back: square(69, 33, 26, 7) + square(33, 69, 26, 7),
+        front: square(33, 33, 26, 7) + square(69, 69, 26, 7),
+        detail: ""
+    })
+    readonly property string lid: "M34 38h60a4 4 0 0 1 0 8H34a4 4 0 0 1 0-8zM54 29h20a4 4 0 0 1 4 4v5H50v-5a4 4 0 0 1 4-4z"
+    readonly property var trashGlyph: ({
+        back: (trash > 0 ? "M47 17l24-5 5 22-24 5z" : "") + lid,
+        front: "M38 51h52l-4 41a8 8 0 0 1-8 7H50a8 8 0 0 1-8-7z",
+        detail: "M55 61v27M64 61v27M73 61v27"
+    })
+    readonly property color graphite: Style.toColor((NyxTheme.swatches || {}).graphite || Style.dimText)
+    DesignTile {
         x: 4
         y: area.containsMouse ? 2 : 4
         Behavior on y {
@@ -33,19 +50,9 @@ Item {
                 duration: Style.fast
             }
         }
-        width: t.size
-        height: t.size
-        radius: Math.round(t.size * 0.22)
-        color: apps ? Style.alpha(Style.accent, 0.14) : Style.alpha(Style.text, 0.08)
-        border.width: 1
-        border.color: apps ? Style.alpha(Style.accent, 0.24) : Style.alpha(Style.text, 0.09)
-        Icon {
-            anchors.centerIn: parent
-            size: Math.max(16, Math.floor(t.size / 2))
-            recolor: true
-            color: parent.apps ? Style.accent : t.trash > 0 ? Style.text : Style.dimText
-            name: t.kind === "apps" ? "view-app-grid-symbolic" : (t.trash > 0 ? "user-trash-full-symbolic" : "user-trash-symbolic")
-        }
+        size: t.size
+        glyph: t.kind === "apps" ? t.appsGlyph : t.trashGlyph
+        tint: t.kind === "apps" ? Style.accent : t.trash > 0 ? Style.mix(t.graphite, Style.text, 0.35) : t.graphite
     }
     Tip {
         target: t

@@ -4,7 +4,8 @@ import Quickshell.Wayland
 import Nyx.Ui
 
 // One screen's dock: the bar in a layer surface at its edge, the thin strip that
-// brings it back, and its popups. Input reaches only the bar (none while hidden).
+// brings it back, and its popups. Input reaches only the bar and the gap between it
+// and the screen's edge (none while hidden).
 Scope {
     id: w
 
@@ -57,7 +58,11 @@ Scope {
         property: "slide"
     }
     property int holds: 0
-    property bool hovered: false
+    // The pointer over the bar, or in the gap between it and the edge: either keeps
+    // a hiding dock up, so moving down past the bar doesn't send it away.
+    property bool barHovered: false
+    property bool gapHovered: false
+    readonly property bool hovered: barHovered || gapHovered
     // An open popup keeps the keyboard (search in the Apps panel, the card's keys).
     property bool wantsKeyboard: false
 
@@ -76,8 +81,10 @@ Scope {
     Connections {
         target: w.client
         function onEvent(ev, body) {
-            if (ev === "PointerLeft" && body.monitor === w.name)
-                w.hovered = false;
+            if (ev === "PointerLeft" && body.monitor === w.name) {
+                w.barHovered = false;
+                w.gapHovered = false;
+            }
         }
         function onReconnected() {
             w.reportGeometry();
@@ -127,6 +134,9 @@ Scope {
         WlrLayershell.keyboardFocus: (w.wantsKeyboard && !w.keyboardOff) ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         mask: Region {
             item: bar
+            Region {
+                item: gap
+            }
         }
 
         DockBar {
@@ -141,6 +151,19 @@ Scope {
             opacity: Math.min((1 - w.shownSlide) / 0.4, 1)
             onWidthChanged: Qt.callLater(w.reportGeometry)
             onHeightChanged: Qt.callLater(w.reportGeometry)
+        }
+        // Between the bar and the screen's edge, as wide (or tall) as the bar: nothing
+        // while the dock is away, so it never takes clicks meant for windows.
+        Item {
+            id: gap
+            readonly property bool up: w.shownSlide === 0
+            x: !up ? 0 : w.horizontal ? bar.homeX : (w.position === "left" ? 0 : bar.homeX + bar.width)
+            y: !up ? 0 : !w.horizontal ? bar.homeY : (w.position === "top" ? 0 : bar.homeY + bar.height)
+            width: !up ? 0 : w.horizontal ? bar.width : (w.position === "left" ? bar.homeX : win.width - bar.homeX - bar.width)
+            height: !up ? 0 : !w.horizontal ? bar.height : (w.position === "top" ? bar.homeY : win.height - bar.homeY - bar.height)
+            HoverHandler {
+                onHoveredChanged: w.gapHovered = hovered
+            }
         }
         onWidthChanged: Qt.callLater(w.reportGeometry)
         onHeightChanged: Qt.callLater(w.reportGeometry)
