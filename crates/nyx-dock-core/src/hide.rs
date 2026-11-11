@@ -100,6 +100,12 @@ pub fn should_hide_on(mode: Hide, desktop: &Desktop, monitor: &Monitor, workspac
     }
 }
 
+/// Whether a window on screen on `monitor` is truly fullscreen (not just maximized).
+/// The dock doesn't come up over one, not even from its edge.
+pub fn fullscreen_on(desktop: &Desktop, monitor: &Monitor) -> bool {
+    desktop.visible_windows(monitor).any(|w| w.fullscreen >= 2)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +193,20 @@ mod tests {
         full.fullscreen = 2;
         let d = desktop(vec![full]);
         assert!(should_hide_on(Hide::Smart, &d, &d.monitors[0], 4, DOCK, Position::Bottom));
+    }
+
+    #[test]
+    fn only_true_fullscreen_on_screen_blocks_the_edge() {
+        let mut full = win(1, [0, 0], [1920, 1080]);
+        full.fullscreen = 2;
+        assert!(fullscreen_on(&desktop(vec![full.clone()]), &monitor(0)));
+        full.fullscreen = 3;
+        assert!(fullscreen_on(&desktop(vec![full.clone()]), &monitor(0)));
+        full.fullscreen = 1;
+        assert!(!fullscreen_on(&desktop(vec![full.clone()]), &monitor(0)), "maximized");
+        full.fullscreen = 2;
+        full.workspace = 2;
+        assert!(!fullscreen_on(&desktop(vec![full]), &monitor(0)), "another workspace");
     }
 
     #[test]

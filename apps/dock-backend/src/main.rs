@@ -34,7 +34,7 @@ use gio::prelude::*;
 use nyx_desktop::apps::Index;
 use nyx_desktop::{Desktop, Monitor, watch};
 use nyx_dock_core::config::{Config, Effective, Hide, Position, first_pins};
-use nyx_dock_core::hide::{Rect, clear_of_dock, mode_here, should_hide, should_hide_on};
+use nyx_dock_core::hide::{Rect, clear_of_dock, fullscreen_on, mode_here, should_hide, should_hide_on};
 use nyx_dock_core::items::{self, Item, MINIMIZED};
 use nyx_dock_core::swipe::{SwipeEvent, resolve_loop};
 use serde_json::{Value, json};
@@ -635,6 +635,12 @@ fn dock_of(s: &Shared, b: &Value) -> Option<Rc<Dock>> {
     s.docks.borrow().iter().find(|d| d.connector == name).cloned()
 }
 
+/// A fullscreen window is on this dock's monitor: a dock mapped now would cover it.
+fn under_fullscreen(s: &Shared, d: &Dock) -> bool {
+    let desktop = s.desktop.borrow().clone();
+    desktop.monitor(&d.connector).is_some_and(|m| fullscreen_on(&desktop, m))
+}
+
 fn str_of(b: &Value, k: &str) -> String {
     b.get(k).and_then(Value::as_str).unwrap_or_default().to_string()
 }
@@ -668,7 +674,7 @@ fn handle(s: &Rc<Shared>, req: nyx_ui_link::Request) {
             } else {
                 d.holds.set(if on { d.holds.get() + 1 } else { d.holds.get().saturating_sub(1) });
             }
-            if (d.hover.get() || d.holds.get() > 0) && d.hidden.get() {
+            if (d.hover.get() || d.holds.get() > 0) && d.hidden.get() && !under_fullscreen(s, &d) {
                 reveal(s, &d, SHOW_MS);
             }
             evaluate(s, &d);
@@ -683,7 +689,7 @@ fn handle(s: &Rc<Shared>, req: nyx_ui_link::Request) {
         }
         "Edge" => {
             let Some(d) = dock_of(s, &b) else { return req.err("not_found", "no dock there") };
-            if d.hidden.get() {
+            if d.hidden.get() && !under_fullscreen(s, &d) {
                 reveal(s, &d, SHOW_MS);
                 let ms = s.config.borrow().hide_delay_ms.max(1200) as u64;
                 let (ws, wd) = (Rc::downgrade(s), Rc::downgrade(&d));
