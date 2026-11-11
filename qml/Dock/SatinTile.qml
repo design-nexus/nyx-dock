@@ -13,37 +13,37 @@ Item {
     readonly property int trash: w.state_.trash || 0
 
     width: size + 8
-    height: size + 10
+    height: size + 12
 
     Rectangle {
         anchors.fill: parent
-        radius: Style.radiusSmall
-        color: drop.containsDrag ? Style.alpha(Style.accent, 0.16) : area.containsMouse ? Style.alpha(Style.text, 0.06) : "transparent"
+        radius: 12
+        color: drop.containsDrag ? Style.alpha(Style.accent, 0.18) : area.containsMouse ? Style.alpha(Style.text, 0.07) : "transparent"
+        border.width: drop.containsDrag ? 2 : 0
+        border.color: Style.accent
     }
-    // As the GTK dock's .dock-satin: a soft square, a hairline, a muted glyph.
+    // A soft square with a hairline and a glyph: the Apps button in the accent, the
+    // Trash muted until it holds something.
     Rectangle {
+        readonly property bool apps: t.kind === "apps"
         x: 4
-        y: 2
-        width: t.size
-        height: t.size
-        radius: 11
-        gradient: Gradient {
-            GradientStop {
-                position: 0
-                color: Style.mix(Style.bg, Style.text, 0.1)
-            }
-            GradientStop {
-                position: 1
-                color: Style.mix(Style.bg, Style.text, 0.03)
+        y: area.containsMouse ? 2 : 4
+        Behavior on y {
+            NumberAnimation {
+                duration: Style.fast
             }
         }
+        width: t.size
+        height: t.size
+        radius: Math.round(t.size * 0.22)
+        color: apps ? Style.alpha(Style.accent, 0.14) : Style.alpha(Style.text, 0.08)
         border.width: 1
-        border.color: Style.alpha(Style.text, 0.1)
+        border.color: apps ? Style.alpha(Style.accent, 0.24) : Style.alpha(Style.text, 0.09)
         Icon {
             anchors.centerIn: parent
             size: Math.max(16, Math.floor(t.size / 2))
             recolor: true
-            color: Style.mix(Style.text, Style.bg, 0.32)
+            color: parent.apps ? Style.accent : t.trash > 0 ? Style.text : Style.dimText
             name: t.kind === "apps" ? "view-app-grid-symbolic" : (t.trash > 0 ? "user-trash-full-symbolic" : "user-trash-symbolic")
         }
     }

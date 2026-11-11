@@ -15,17 +15,24 @@ Item {
     readonly property var newest: folder.newest || []
 
     width: size + 8
-    height: size + 10
+    height: size + 12
 
     Rectangle {
         anchors.fill: parent
-        radius: Style.radiusSmall
-        color: drop.containsDrag ? Style.alpha(Style.accent, 0.16) : area.containsMouse ? Style.alpha(Style.text, 0.06) : "transparent"
+        radius: 12
+        color: drop.containsDrag ? Style.alpha(Style.accent, 0.18) : area.containsMouse ? Style.alpha(Style.text, 0.07) : "transparent"
+        border.width: drop.containsDrag ? 2 : 0
+        border.color: Style.accent
     }
     // The stack: up to three newest files as tilted cards.
     Item {
         x: 4
-        y: 2
+        y: area.containsMouse ? 2 : 4
+        Behavior on y {
+            NumberAnimation {
+                duration: Style.fast
+            }
+        }
         width: t.size
         height: t.size
         visible: t.folder.look === "stack" && t.newest.length > 0
@@ -68,7 +75,12 @@ Item {
     }
     Icon {
         x: 4
-        y: 2
+        y: area.containsMouse ? 2 : 4
+        Behavior on y {
+            NumberAnimation {
+                duration: Style.fast
+            }
+        }
         visible: !(t.folder.look === "stack" && t.newest.length > 0)
         size: t.size
         name: t.folder.icon || "folder"
@@ -82,7 +94,7 @@ Item {
         radius: 9
         color: Style.raised
         border.width: 2
-        border.color: Style.card
+        border.color: Style.popover
         Label {
             id: countText
             anchors.centerIn: parent

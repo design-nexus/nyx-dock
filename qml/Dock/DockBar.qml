@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Nyx.Ui
 
@@ -24,12 +25,33 @@ Rectangle {
     property string dragKey: ""
     property int dropIndex: -1
 
-    width: lay.implicitWidth + (horizontal ? 16 : 13)
-    height: lay.implicitHeight + (horizontal ? 13 : 16)
-    radius: Style.radiusDialog
-    color: Style.card
-    border.width: 1
-    border.color: Style.border
+    // The popover surface, 22 px corners, 6 px above the tiles, 8 at the ends, 3 below
+    // (their marks sit low), and a soft shadow; the window leaves room for it.
+    width: lay.implicitWidth + (horizontal ? 16 : 12)
+    height: lay.implicitHeight + (horizontal ? 9 : 16)
+    radius: 22
+    color: "transparent"
+
+    MultiEffect {
+        anchors.fill: surface
+        source: surface
+        z: -2
+        shadowEnabled: true
+        shadowColor: Style.alpha(Style.shadow, 0.55 * Style.shadowIntensity / 0.5)
+        shadowBlur: 1.0
+        blurMax: 40
+        shadowVerticalOffset: 10
+        shadowHorizontalOffset: 0
+    }
+    Rectangle {
+        id: surface
+        anchors.fill: parent
+        z: -1
+        radius: bar.radius
+        color: Style.popover
+        border.width: 1
+        border.color: Style.light ? Style.border : Style.alpha(Style.text, 0.09)
+    }
 
     HoverHandler {
         onHoveredChanged: bar.w.hovered = hovered
@@ -52,18 +74,36 @@ Rectangle {
         anchorItem: bar
     }
 
+    // A line between groups: 1 px, inset from the tile's top and its marks.
+    component Line: Item {
+        property bool lit: false
+        width: bar.horizontal ? 13 : bar.icon + 8
+        height: bar.horizontal ? bar.icon + 12 : 13
+        Rectangle {
+            x: bar.horizontal ? 6 : 10
+            y: bar.horizontal ? 10 : 6
+            width: bar.horizontal ? 1 : parent.width - 20
+            height: bar.horizontal ? parent.height - 24 : 1
+            color: parent.lit ? Style.accent : Style.alpha(Style.text, 0.14)
+        }
+    }
+
     Grid {
         id: lay
-        anchors.centerIn: parent
+        x: bar.horizontal ? 8 : 6
+        y: bar.horizontal ? 6 : 8
         flow: bar.horizontal ? Grid.LeftToRight : Grid.TopToBottom
         rows: bar.horizontal ? 1 : 1000
         columns: bar.horizontal ? 1000 : 1
-        spacing: 2
+        spacing: 3
 
         SatinTile {
             visible: bar.showApps
             dockWindow: bar.w
             kind: "apps"
+        }
+        Line {
+            visible: bar.showApps && bar.items.length > 0
         }
         Repeater {
             model: ScriptModel {
@@ -76,14 +116,13 @@ Rectangle {
                 index_: index
                 dockWindow: bar.w
                 barItem: bar
+                leadLine: !item.pinned && index > 0 && !!(bar.items[index - 1] || {}).pinned
             }
         }
-        Rectangle {
+        Line {
             id: sep
             visible: bar.folders.length > 0 || bar.showTrash
-            width: bar.horizontal ? 1 : bar.icon
-            height: bar.horizontal ? bar.icon : 1
-            color: folderDrop.containsDrag ? Style.accent : Style.border
+            lit: folderDrop.containsDrag
             DropArea {
                 id: folderDrop
                 anchors.fill: parent
