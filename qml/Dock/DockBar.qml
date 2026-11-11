@@ -25,7 +25,7 @@ Rectangle {
     property string dragKey: ""
     property int dropIndex: -1
 
-    // The popover surface, 22 px corners, 6 px above the tiles, 8 at the ends, 3 below
+    // The bar's surface (@theme_panel), 22 px corners, 6 px above the tiles, 8 at the ends, 3 below
     // (their marks sit low), and a soft shadow; the window leaves room for it.
     width: lay.implicitWidth + (horizontal ? 16 : 12)
     height: lay.implicitHeight + (horizontal ? 9 : 16)
@@ -48,7 +48,7 @@ Rectangle {
         anchors.fill: parent
         z: -1
         radius: bar.radius
-        color: Style.popover
+        color: Style.panel
         border.width: 1
         border.color: Style.light ? Style.border : Style.alpha(Style.text, 0.09)
     }
@@ -128,10 +128,18 @@ Rectangle {
                 anchors.fill: parent
                 anchors.margins: -10
                 keys: ["text/uri-list"]
-                onEntered: bar.w.hold(true)
-                onExited: bar.w.hold(false)
+                // A drop ends the drag without an exit, or with one: release once.
+                property bool holding: false
+                function setHold(on) {
+                    if (on !== holding) {
+                        holding = on;
+                        bar.w.hold(on);
+                    }
+                }
+                onEntered: setHold(true)
+                onExited: setHold(false)
                 onDropped: drop => {
-                    bar.w.hold(false);
+                    setHold(false);
                     bar.w.call("AddFolders", { uris: drop.urls.map(u => u.toString()) });
                     drop.accept();
                 }

@@ -94,7 +94,7 @@ Item {
         radius: 9
         color: Style.raised
         border.width: 2
-        border.color: Style.popover
+        border.color: Style.panel
         Label {
             id: countText
             anchors.centerIn: parent
@@ -187,7 +187,13 @@ Item {
             { id: "files", label: "Open in Files", icon: "folder-open-symbolic" },
             { id: "remove", label: "Remove from Dock", icon: "list-remove-symbolic" }
         ]
-        onVisibleChanged: t.w.hold(visible)
+        property bool holding: false
+        onVisibleChanged: if (visible !== holding) {
+            holding = visible;
+            t.w.hold(visible);
+        }
+        Component.onDestruction: if (holding)
+            t.w.hold(false)
         onTriggered: id => {
             if (id === "files")
                 t.w.call("OpenDefault", { uri: t.folder.uri });

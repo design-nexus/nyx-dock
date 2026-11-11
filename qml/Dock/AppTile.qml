@@ -89,7 +89,7 @@ Item {
             radius: 9
             color: Style.danger
             border.width: 2
-            border.color: Style.popover
+            border.color: Style.panel
             Label {
                 id: badgeText
                 anchors.centerIn: parent
@@ -211,7 +211,15 @@ Item {
             size: t.size
             name: t.item.icon || "application-x-executable"
         }
-        onVisibleChanged: t.w.hold(visible)
+        // Only a real drag holds the dock: a new tile's ghost starts visible and hides,
+        // and that release took another popup's hold (the Apps panel's).
+        property bool holding: false
+        onVisibleChanged: if (visible !== holding) {
+            holding = visible;
+            t.w.hold(visible);
+        }
+        Component.onDestruction: if (holding)
+            t.w.hold(false)
     }
     // Another app dropped here takes this place among the pins; files open with this app.
     DropArea {

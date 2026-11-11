@@ -95,11 +95,17 @@ Item {
         anchorItem: t
         property bool armed: false
         entries: [{ id: "open", label: "Open Trash", icon: "folder-open-symbolic" }].concat(t.trash > 0 ? [{ id: "empty", label: armed ? "Empty Trash: this can't be undone" : "Empty Trash…", icon: "user-trash-full-symbolic", danger: true }] : [])
+        property bool holding: false
         onVisibleChanged: {
-            t.w.hold(visible);
+            if (visible !== holding) {
+                holding = visible;
+                t.w.hold(visible);
+            }
             if (!visible)
                 armTimer.stop();
         }
+        Component.onDestruction: if (holding)
+            t.w.hold(false)
         onTriggered: id => {
             if (id === "open")
                 t.w.call("OpenTrash", {});

@@ -677,6 +677,7 @@ fn handle(s: &Rc<Shared>, req: nyx_ui_link::Request) {
                 d.hover.set(on);
             } else {
                 d.holds.set(if on { d.holds.get() + 1 } else { d.holds.get().saturating_sub(1) });
+                debug(|| format!("{}: hold {on}, now {}", d.connector, d.holds.get()));
             }
             if (d.hover.get() || d.holds.get() > 0) && d.hidden.get() && !under_fullscreen(s, &d) {
                 reveal(s, &d, SHOW_MS);
