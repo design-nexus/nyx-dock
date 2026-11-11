@@ -10,7 +10,7 @@
 //! open (`Hover`, `Hold`, `Geometry`).
 //!
 //! Topic `dock`: `{global, monitors: [{name, stable_id, settings, items, hidden,
-//! offset, slide_ms, reserve}]}`.
+//! offset, lift, slide_ms, reserve}]}`.
 
 #[path = "../../dock/src/badges.rs"]
 mod badges;
@@ -85,6 +85,9 @@ pub struct Dock {
     rect: Cell<Rect>,
     /// A swipe moving the dock: how far out of sight (0–1); None otherwise.
     offset: Cell<Option<f64>>,
+    // A swipe away from a fullscreen workspace: Hyprland draws no top-layer surface over
+    // it until the swipe ends, so the dock rides above it meanwhile (the overlay layer).
+    lift: Cell<bool>,
     slide_ms: Cell<u32>,
     reserve: Cell<bool>,
     timer: RefCell<Option<glib::SourceId>>,
@@ -203,6 +206,7 @@ fn rebuild(s: &Rc<Shared>) {
             holds: Cell::new(0),
             rect: Cell::new(Rect { x: 0, y: 0, w: 0, h: 0 }),
             offset: Cell::new(None),
+            lift: Cell::new(false),
             slide_ms: Cell::new(0),
             reserve: Cell::new(false),
             timer: RefCell::default(),
@@ -300,7 +304,7 @@ fn publish(s: &Rc<Shared>) {
                     "name": d.connector, "stable_id": d.stable_id,
                     "settings": {"icon_size": e.icon_size, "position": format!("{:?}", e.position).to_lowercase(),
                                  "hide": format!("{:?}", e.hide).to_lowercase(), "running": format!("{:?}", e.running).to_lowercase()},
-                    "items": items, "hidden": d.hidden.get(), "offset": d.offset.get(), "slide_ms": d.slide_ms.get(),
+                    "items": items, "hidden": d.hidden.get(), "offset": d.offset.get(), "lift": d.lift.get(), "slide_ms": d.slide_ms.get(),
                     "reserve": d.reserve.get(),
                 }))
             })
@@ -470,6 +474,7 @@ fn follow_swipe(s: &Rc<Shared>, event: &SwipeEvent) {
                 let (start, was_hidden) = d.swipe.get().unwrap_or((*from, d.hidden.get()));
                 if d.swipe.get().is_none() {
                     d.swipe.set(Some((start, was_hidden)));
+                    d.lift.set(desktop.workspaces.iter().any(|w| w.id == start && w.has_fullscreen));
                     cancel_timer(&d);
                     cancel_settle(&d);
                 }
@@ -501,6 +506,7 @@ fn watch_swipe(s: &Rc<Shared>, d: &Rc<Dock>) {
 
 fn end_swipe(s: &Rc<Shared>, d: &Rc<Dock>, active: Option<i64>) {
     let Some((start, _)) = d.swipe.take() else { return };
+    d.lift.set(false);
     if let Some(t) = d.swipe_watchdog.borrow_mut().take() {
         t.remove();
     }

@@ -119,7 +119,9 @@ Scope {
         implicitHeight: bar.height + (w.horizontal ? 26 : 44) + 16
         exclusionMode: w.mon.reserve ? ExclusionMode.Normal : ExclusionMode.Ignore
         exclusiveZone: w.mon.reserve ? (w.horizontal ? bar.height + 10 : bar.width + 10) : 0
-        WlrLayershell.layer: WlrLayer.Top
+        // Above a fullscreen workspace while a swipe leaves it (`lift`): Hyprland draws no
+        // top-layer surface over one, so the dock would only appear once the swipe ended.
+        WlrLayershell.layer: w.mon.lift ? WlrLayer.Overlay : WlrLayer.Top
         WlrLayershell.namespace: "nyx-dock"
         WlrLayershell.keyboardFocus: (w.wantsKeyboard && !w.keyboardOff) ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         mask: Region {
