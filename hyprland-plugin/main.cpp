@@ -11,13 +11,22 @@
 #define WLR_USE_UNSTABLE
 
 #include <hyprland/src/plugins/PluginAPI.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/output/Monitor.hpp>
-#include <hyprland/src/managers/EventManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/input/UnifiedWorkspaceSwipeGesture.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
+
+// Hyprland 0.57 moved workspaces to src/workspace, made their id a variant (a named
+// workspace has no number, and IPC reports none) and events go through Socket2.
+#if __has_include(<hyprland/src/workspace/HLWorkspace.hpp>)
+#include <hyprland/src/workspace/HLWorkspace.hpp>
+#include <hyprland/src/ipc/s2/S2.hpp>
+#define NYX_HYPRLAND_057 1
+#else
+#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/managers/EventManager.hpp>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -28,11 +37,46 @@
 
 namespace {
 
+    using WsId           = int64_t;
+    constexpr WsId NO_WS = -1;
+
+#ifdef NYX_HYPRLAND_057
+    // Numbered workspaces only: the ids `hyprctl workspaces` gives.
+    WsId idOf(const PHLWORKSPACE& ws) {
+        const auto n = ws->numberedID();
+        return n ? WsId(*n) : NO_WS;
+    }
+    bool isSpecial(const PHLWORKSPACE& ws) {
+        return ws->type() == Workspace::eWorkspaceType::SPECIAL;
+    }
+    bool isVisible(const PHLWORKSPACE& ws) {
+        return ws->visible();
+    }
+    void post(const char* event, const std::string& data) {
+        if (IPC::Socket2::sock())
+            IPC::Socket2::sock()->postEvent({.event = event, .data = data});
+    }
+#else
+    WsId idOf(const PHLWORKSPACE& ws) {
+        return ws->inert() ? NO_WS : WsId(ws->m_id);
+    }
+    bool isSpecial(const PHLWORKSPACE& ws) {
+        return ws->m_isSpecialWorkspace;
+    }
+    bool isVisible(const PHLWORKSPACE& ws) {
+        return ws->m_visible;
+    }
+    void post(const char* event, const std::string& data) {
+        if (g_pEventManager)
+            g_pEventManager->postEvent(SHyprIPCEvent{event, data});
+    }
+#endif
+
     struct Slide {
-        bool        active = false;
-        WORKSPACEID from   = WORKSPACE_INVALID;
-        WORKSPACEID to     = WORKSPACE_INVALID;
-        double      last   = -1;
+        bool   active = false;
+        WsId   from   = NO_WS;
+        WsId   to     = NO_WS;
+        double last   = -1;
     };
 
     // By monitor name.
@@ -42,23 +86,18 @@ namespace {
     // Dropped on unload, so a pending look never runs code that's gone.
     UP<SEventLoopDoLaterLock> afterSwipe;
 
-    void post(const char* event, const std::string& data) {
-        if (g_pEventManager)
-            g_pEventManager->postEvent(SHyprIPCEvent{event, data});
-    }
-
     std::vector<PHLWORKSPACE> workspacesOn(const PHLMONITOR& mon) {
         std::vector<PHLWORKSPACE> out;
         for (const auto& ref : State::workspaceState()->workspaceRefs()) {
             auto ws = ref.lock();
-            if (ws && !ws->inert() && ws->m_renderOffset && !ws->m_isSpecialWorkspace && ws->m_monitor.lock() == mon)
+            if (ws && idOf(ws) != NO_WS && ws->m_renderOffset && !isSpecial(ws) && ws->m_monitor.lock() == mon)
                 out.push_back(ws);
         }
         return out;
     }
 
     bool drawn(const PHLWORKSPACE& ws, const PHLMONITOR& mon) {
-        return ws->m_visible || ws->m_forceRendering || ws == mon->m_activeWorkspace;
+        return isVisible(ws) || ws->m_forceRendering || ws == mon->m_activeWorkspace;
     }
 
     void check(const PHLMONITOR& mon) {
@@ -78,15 +117,15 @@ namespace {
         if (!slide.active) {
             if (!moving)
                 return;
-            slide = Slide{.active = true, .from = mon->m_activeWorkspace->m_id};
+            slide = Slide{.active = true, .from = idOf(mon->m_activeWorkspace)};
         }
         if (!moving && !gesture) {
-            post("nyxswipeend", mon->m_name + "," + std::to_string(mon->m_activeWorkspace->m_id));
+            post("nyxswipeend", mon->m_name + "," + std::to_string(idOf(mon->m_activeWorkspace)));
             slide = Slide{};
             return;
         }
 
-        const auto from = std::ranges::find_if(on, [&](const auto& ws) { return ws->m_id == slide.from; });
+        const auto from = std::ranges::find_if(on, [&](const auto& ws) { return idOf(ws) == slide.from; });
         if (from == on.end())
             return;
         const auto   fromOff  = (*from)->m_renderOffset->value();
@@ -101,7 +140,7 @@ namespace {
         // place), the nearest one.
         double best = INFINITY;
         for (const auto& ws : on) {
-            if (ws->m_id == slide.from || !drawn(ws, mon))
+            if (idOf(ws) == slide.from || !drawn(ws, mon))
                 continue;
             const auto   off = ws->m_renderOffset->value();
             const double a   = vertical ? off.y : off.x;
@@ -109,10 +148,10 @@ namespace {
                 continue;
             if (std::abs(a) < best) {
                 best     = std::abs(a);
-                slide.to = ws->m_id;
+                slide.to = idOf(ws);
             }
         }
-        if (slide.to == WORKSPACE_INVALID || std::abs(progress - slide.last) < 0.005)
+        if (slide.to == NO_WS || std::abs(progress - slide.last) < 0.005)
             return;
         slide.last = progress;
         char p[16];
