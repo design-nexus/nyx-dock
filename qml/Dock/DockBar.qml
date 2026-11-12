@@ -59,6 +59,29 @@ Rectangle {
     function openMenu() {
         menu.open();
     }
+    // Keyboard: the first tile, the arrows along the dock (Tab too), Escape to leave.
+    function focusFirst() {
+        for (let i = 0; i < lay.children.length; i++) {
+            const c = lay.children[i];
+            if (c.visible && c.activeFocusOnTab) {
+                c.forceActiveFocus(Qt.TabFocusReason);
+                return;
+            }
+        }
+    }
+    Keys.onPressed: e => {
+        const forward = e.key === Qt.Key_Right || e.key === Qt.Key_Down;
+        if (forward || e.key === Qt.Key_Left || e.key === Qt.Key_Up) {
+            const from = bar.Window.activeFocusItem;
+            const to = from ? from.nextItemInFocusChain(forward) : null;
+            if (to)
+                to.forceActiveFocus(Qt.TabFocusReason);
+            e.accepted = true;
+        } else if (e.key === Qt.Key_Escape && bar.w.keyboardMode) {
+            bar.w.keyboardMode = false;
+            e.accepted = true;
+        }
+    }
     TapHandler {
         acceptedButtons: Qt.RightButton
         onTapped: menu.open()

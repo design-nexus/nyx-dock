@@ -65,6 +65,14 @@ Scope {
     readonly property bool hovered: barHovered || gapHovered
     // An open popup keeps the keyboard (search in the Apps panel, the card's keys).
     property bool wantsKeyboard: false
+    // The keyboard on the dock itself (`nyx-dock --focus`, Super+Ctrl+Alt+D): it stays up,
+    // its first tile takes the focus, and Escape (or opening an app) gives it back.
+    property bool keyboardMode: false
+    onKeyboardModeChanged: {
+        hold(keyboardMode);
+        if (keyboardMode)
+            Qt.callLater(bar.focusFirst);
+    }
 
     function openMenu() {
         bar.openMenu();
@@ -84,6 +92,8 @@ Scope {
             if (ev === "PointerLeft" && body.monitor === w.name) {
                 w.barHovered = false;
                 w.gapHovered = false;
+            } else if (ev === "Focus" && body.monitor === w.name && !w.keyboardOff) {
+                w.keyboardMode = true;
             }
         }
         function onReconnected() {
@@ -131,7 +141,7 @@ Scope {
         exclusiveZone: w.mon.reserve ? (w.horizontal ? bar.height + 10 : bar.width + 10) : 0
         WlrLayershell.layer: WlrLayer.Top
         WlrLayershell.namespace: "nyx-dock"
-        WlrLayershell.keyboardFocus: (w.wantsKeyboard && !w.keyboardOff) ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+        WlrLayershell.keyboardFocus: w.keyboardOff ? WlrKeyboardFocus.None : w.keyboardMode ? WlrKeyboardFocus.Exclusive : w.wantsKeyboard ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         mask: Region {
             item: bar
             Region {

@@ -31,6 +31,19 @@ fn main() -> std::process::ExitCode {
             "--enable" => return report(handover::enable()),
             "--disable" => return report(handover::disable()),
             "--only" => only = args.next(),
+            "--focus" => {
+                return match nyx_ui_link::switch::forward("nyx-dock", "Focus", serde_json::json!({})) {
+                    Some(Ok(_)) => std::process::ExitCode::SUCCESS,
+                    Some(Err(e)) => {
+                        eprintln!("nyx-dock: {e}");
+                        std::process::ExitCode::FAILURE
+                    }
+                    None => {
+                        eprintln!("nyx-dock: the dock isn't running");
+                        std::process::ExitCode::FAILURE
+                    }
+                };
+            }
             "--ui" => {
                 return match args.next().as_deref().map(nyx_ui_link::switch::Ui::parse) {
                     Some(Some(ui)) => report(handover::choose(ui)),
@@ -51,11 +64,12 @@ fn main() -> std::process::ExitCode {
             }
             "-h" | "--help" => {
                 println!(
-                    "Usage: nyx-dock [--enable | --disable | --ui [qml|gtk] | --only <output>]\n\n\
+                    "Usage: nyx-dock [--enable | --disable | --ui [qml|gtk] | --focus | --only <output>]\n\n\
                      With no option, run the dock.\n\
                      --enable    start the dock now and at login, and turn Omarchy's dock off\n\
                      --disable   stop the dock and turn Omarchy's dock back on\n\
                      --ui        use the Quickshell (qml) or the GTK interface; alone, show which\n\
+                     --focus     give the running dock the keyboard (Quickshell dock)\n\
                      --only      show the dock on this output only (e.g. HEADLESS-1)"
                 );
                 return std::process::ExitCode::SUCCESS;

@@ -109,6 +109,29 @@ Item {
         shown: area.containsMouse && !view.visible
         below: t.w.position === "top"
     }
+    function activate() {
+        if (t.folder.open === "files")
+            t.w.call("OpenDefault", { uri: t.folder.uri });
+        else
+            view.open();
+    }
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: t.folder.name || ""
+    Accessible.description: (t.folder.count || 0) + " items"
+    Accessible.onPressAction: activate()
+    Keys.onPressed: e => {
+        if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter || e.key === Qt.Key_Space) {
+            activate();
+            e.accepted = true;
+        } else if (e.key === Qt.Key_Menu || (e.key === Qt.Key_F10 && (e.modifiers & Qt.ShiftModifier))) {
+            menu.openAt(t.width / 2, 0);
+            e.accepted = true;
+        }
+    }
+    FocusRing {
+        radius_: 14
+    }
     MouseArea {
         id: area
         anchors.fill: parent
@@ -116,14 +139,7 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         drag.target: ghost
         drag.threshold: 8
-        onClicked: m => {
-            if (m.button === Qt.RightButton)
-                menu.openAt(t.width / 2, 0);
-            else if (t.folder.open === "files")
-                t.w.call("OpenDefault", { uri: t.folder.uri });
-            else
-                view.open();
-        }
+        onClicked: m => m.button === Qt.RightButton ? menu.openAt(t.width / 2, 0) : t.activate()
         onReleased: {
             if (!drag.active)
                 return;

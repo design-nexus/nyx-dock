@@ -670,6 +670,13 @@ fn handle(s: &Rc<Shared>, req: nyx_ui_link::Request) {
     let b = req.body.clone();
     let ok = |req: nyx_ui_link::Request| req.ok(json!({}));
     match req.op.as_str() {
+        // `nyx-dock --focus`: the dock on the focused monitor takes the keyboard.
+        "Focus" => {
+            let desktop = s.desktop.borrow().clone();
+            let Some(m) = desktop.focused_monitor() else { return req.err("not_found", "no monitor has the focus") };
+            s.link.emit("Focus", json!({"monitor": m.name}));
+            ok(req)
+        }
         "Hover" | "Hold" => {
             let Some(d) = dock_of(s, &b) else { return req.err("not_found", "no dock there") };
             let on = b.get("on").and_then(Value::as_bool).unwrap_or(false);

@@ -27,6 +27,28 @@ Item {
     width: size + 8 + (horizontal ? lead : 0)
     height: size + 12 + (horizontal ? 0 : lead)
 
+    // From the keyboard (Super+Ctrl+Alt+D focuses the dock): Enter opens it or brings its
+    // window forward, the Menu key opens its card.
+    function activate() {
+        preview.close();
+        w.keyboardMode = false;
+        w.call("Activate", { key: item.key });
+    }
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: item.name || ""
+    Accessible.description: windows === 0 ? "" : windows === 1 ? "1 window" : windows + " windows"
+    Accessible.onPressAction: activate()
+    Keys.onPressed: e => {
+        if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter || e.key === Qt.Key_Space) {
+            activate();
+            e.accepted = true;
+        } else if (e.key === Qt.Key_Menu || (e.key === Qt.Key_F10 && (e.modifiers & Qt.ShiftModifier))) {
+            card.open();
+            e.accepted = true;
+        }
+    }
+
     Rectangle {
         visible: t.leadLine
         x: t.horizontal ? 1 : 18
@@ -42,6 +64,11 @@ Item {
         width: t.size + 8
         height: t.size + 12
 
+        FocusRing {
+            target: t
+            anchors.fill: tile
+            radius_: 14
+        }
         Rectangle {
             anchors.fill: parent
             radius: 12
@@ -180,8 +207,7 @@ Item {
                 if (t.item.app)
                     t.w.call("NewInstance", { key: t.item.key });
             } else {
-                preview.close();
-                t.w.call("Activate", { key: t.item.key });
+                t.activate();
             }
         }
         onReleased: {

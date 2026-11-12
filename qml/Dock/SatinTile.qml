@@ -60,22 +60,41 @@ Item {
         shown: area.containsMouse && !apps.visible
         below: t.w.position === "top"
     }
+    function activate() {
+        if (t.kind === "apps")
+            apps.visible ? apps.close() : apps.open();
+        else
+            t.w.call("OpenTrash", {});
+    }
+    function openMenu() {
+        if (t.kind === "apps")
+            t.w.openMenu();
+        else
+            trashMenu.openAt(t.width / 2, 0);
+    }
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: t.kind === "apps" ? "Apps" : "Trash"
+    Accessible.description: t.kind === "trash" ? t.trash + " items" : ""
+    Accessible.onPressAction: activate()
+    Keys.onPressed: e => {
+        if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter || e.key === Qt.Key_Space) {
+            activate();
+            e.accepted = true;
+        } else if (e.key === Qt.Key_Menu || (e.key === Qt.Key_F10 && (e.modifiers & Qt.ShiftModifier))) {
+            openMenu();
+            e.accepted = true;
+        }
+    }
+    FocusRing {
+        radius_: 14
+    }
     MouseArea {
         id: area
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.RightButton
-        onClicked: m => {
-            if (t.kind === "apps") {
-                if (m.button === Qt.RightButton)
-                    t.w.openMenu();
-                else
-                    apps.visible ? apps.close() : apps.open();
-            } else if (m.button === Qt.RightButton)
-                trashMenu.openAt(t.width / 2, 0);
-            else
-                t.w.call("OpenTrash", {});
-        }
+        onClicked: m => m.button === Qt.RightButton ? t.openMenu() : t.activate()
     }
     DropArea {
         id: drop
