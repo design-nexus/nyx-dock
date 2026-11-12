@@ -12,9 +12,12 @@ use std::time::Duration;
 
 const PLUGIN: &str = "nyx-dock-swipe";
 
-/// Where `install.sh` puts the plugin.
+/// Where the plugin is: `NYX_DOCK_SWIPE_PLUGIN` (NyxOS builds it with its Hyprland),
+/// else where `install.sh` puts it.
 fn plugin_path() -> PathBuf {
-    glib::home_dir().join(format!(".local/lib/nyx-dock/{PLUGIN}.so"))
+    std::env::var_os("NYX_DOCK_SWIPE_PLUGIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| glib::home_dir().join(format!(".local/lib/nyx-dock/{PLUGIN}.so")))
 }
 
 /// Load the plugin into Hyprland if it's installed and not in yet: at start, and after
