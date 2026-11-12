@@ -72,13 +72,13 @@ DockPopup {
             spacing: 10
             Icon {
                 size: 36
-                name: p.info ? p.info.icon : p.item.icon
+                name: (p.info ? p.info.icon : p.item.icon) || ""
             }
             Column {
                 anchors.verticalCenter: parent.verticalCenter
                 Label {
                     width: 240
-                    text: p.info ? p.info.name : p.item.name
+                    text: (p.info ? p.info.name : p.item.name) || ""
                     font.weight: Font.DemiBold
                 }
                 Label {
