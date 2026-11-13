@@ -461,12 +461,13 @@ fn folder_face(icon: Option<&str>, dir: &Path, size: i32) -> gtk::Widget {
     satin.upcast()
 }
 
-/// With the Umbra icon theme in use, its icon for this folder: the folder's own icon
-/// (Games, Dropbox… as `umbra-icons folders` sets them), else its XDG one (Downloads).
-/// Other icon themes keep the dock's satin tile.
+/// With an Umbra or Vellum icon theme in use, its icon for this folder: the folder's own
+/// icon (Games, Dropbox… as `umbra-icons folders` and `vellum-icons folders` set them),
+/// else its XDG one (Downloads). Other icon themes keep the dock's satin tile.
 fn umbra_folder_icon(dir: &Path) -> Option<gio::Icon> {
     let theme = gtk::IconTheme::for_display(&gdk::Display::default()?);
-    if !theme.theme_name().starts_with("Umbra") {
+    let name = theme.theme_name();
+    if !name.starts_with("Umbra") && !name.starts_with("Vellum") {
         return None;
     }
     let info = gio::File::for_path(dir)
