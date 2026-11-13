@@ -14,6 +14,7 @@
 //! apps_search_bar = false # the Apps panel's search bar always shown (off: when you type)
 //! folder_counts = true    # item count badges on folders (a folder's `count` overrides)
 //! window_controls = false # hover buttons on floating windows
+//! click_animation = "squish" # squish | bounce | ripple | pop | glow | depress | none
 //!
 //! [monitors."Samsung Display Corp.|ATNA60DL01-0|"]   # a monitor's stable id, or its connector
 //! icon_size = 40
@@ -61,6 +62,26 @@ pub enum Running {
     All,
     /// Only apps with a window on this monitor.
     Monitor,
+}
+
+/// How an app's icon answers a click (none of them move under Reduce motion).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ClickAnimation {
+    /// Shrinks while pressed, springs back on release.
+    #[default]
+    Squish,
+    /// Hops twice; an app that isn't running hops until its first window opens.
+    Bounce,
+    /// An accent ring spreads out and fades.
+    Ripple,
+    /// Grows a little and settles.
+    Pop,
+    /// An accent glow flashes behind the icon.
+    Glow,
+    /// Sinks and darkens while pressed.
+    Depress,
+    None,
 }
 
 pub const ICON_SIZES: std::ops::RangeInclusive<u32> = 24..=96;
@@ -182,6 +203,8 @@ pub struct Config {
     /// Hover buttons (minimize, maximize, close) on the focused floating window, for
     /// when Omarchy's floating titlebar is off. Settings sets it.
     pub window_controls: bool,
+    /// How an app's icon answers a click.
+    pub click_animation: ClickAnimation,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub monitors: BTreeMap<String, MonitorConfig>,
 }
@@ -204,6 +227,7 @@ impl Default for Config {
             app_names: true,
             apps_search_bar: false,
             window_controls: false,
+            click_animation: ClickAnimation::Squish,
             monitors: BTreeMap::new(),
         }
     }

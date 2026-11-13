@@ -34,13 +34,75 @@ Item {
         w.keyboardMode = false;
         w.call("Activate", { key: item.key });
     }
+
+    // How the icon answers a click (`click_animation`). Squish and Depress follow the
+    // button; the others play once it's clicked. Keys play the whole press.
+    readonly property string animation: Style.reducedMotion ? "none" : (w.global.click_animation || "squish")
+    readonly property bool held: area.pressed && (area.pressedButtons & Qt.LeftButton) && !area.drag.active
+    // Bounce on an app with no window: hops until one opens, or 5 s.
+    property bool launching: false
+    property real dim: 0
+    // Bounce and Depress move the icon away from the screen's edge (or into it).
+    property real hop: 0
+    onHeldChanged: {
+        if (animation === "squish") {
+            (held ? squishUp : squishDown).stop();
+            (held ? squishDown : squishUp).start();
+        } else if (animation === "depress") {
+            (held ? depressUp : depressDown).stop();
+            (held ? depressDown : depressUp).start();
+        }
+    }
+    onWindowsChanged: if (windows > 0)
+        launching = false
+    function play(fromKeys) {
+        switch (animation) {
+        case "squish":
+            if (fromKeys)
+                squishTap.restart();
+            break;
+        case "depress":
+            if (fromKeys)
+                depressTap.restart();
+            break;
+        case "bounce":
+            if (windows === 0 && item.app) {
+                launching = true;
+                launchLimit.restart();
+                if (!launchHop.running)
+                    launchHop.start();
+            } else if (!launchHop.running) {
+                bounce.restart();
+            }
+            break;
+        case "pop":
+            pop.restart();
+            break;
+        case "ripple":
+            ripple.restart();
+            break;
+        case "glow":
+            glow.restart();
+            break;
+        }
+    }
+    Timer {
+        id: launchLimit
+        interval: 5000
+        onTriggered: t.launching = false
+    }
+
     activeFocusOnTab: true
     Accessible.role: Accessible.Button
     Accessible.name: item.name || ""
     Accessible.description: windows === 0 ? "" : windows === 1 ? "1 window" : windows + " windows"
-    Accessible.onPressAction: activate()
+    Accessible.onPressAction: {
+        play(true);
+        activate();
+    }
     Keys.onPressed: e => {
         if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter || e.key === Qt.Key_Space) {
+            play(true);
             activate();
             e.accepted = true;
         } else if (e.key === Qt.Key_Menu || (e.key === Qt.Key_F10 && (e.modifiers & Qt.ShiftModifier))) {
@@ -93,6 +155,82 @@ Item {
             shadowVerticalOffset: 0
             shadowHorizontalOffset: 0
         }
+        // Click: Glow, a brief accent glow behind the icon.
+        MultiEffect {
+            anchors.fill: icon
+            source: icon
+            visible: opacity > 0
+            opacity: 0
+            shadowEnabled: true
+            shadowColor: Style.accent
+            shadowBlur: 0.8
+            blurMax: 24
+            shadowScale: 1.06
+            shadowVerticalOffset: 0
+            shadowHorizontalOffset: 0
+            SequentialAnimation on opacity {
+                id: glow
+                running: false
+                NumberAnimation {
+                    to: 1
+                    duration: 120
+                    easing.type: Easing.OutCubic
+                }
+                NumberAnimation {
+                    to: 0
+                    duration: 380
+                    easing.type: Easing.InOutQuad
+                }
+            }
+        }
+        // Click: Ripple, an accent ring in the icon's shape spreading out.
+        Rectangle {
+            id: ring
+            x: icon.x
+            y: icon.y
+            width: t.size
+            height: t.size
+            radius: t.size * 0.26
+            color: "transparent"
+            border.color: Style.accent
+            border.width: 3
+            opacity: 0
+            visible: opacity > 0
+            ParallelAnimation {
+                id: ripple
+                NumberAnimation {
+                    target: ring
+                    property: "scale"
+                    from: 1
+                    to: 1.6
+                    duration: 450
+                    easing.type: Easing.OutCubic
+                }
+                NumberAnimation {
+                    target: ring
+                    property: "border.width"
+                    from: 3
+                    to: 1
+                    duration: 450
+                }
+                SequentialAnimation {
+                    NumberAnimation {
+                        target: ring
+                        property: "opacity"
+                        from: 1
+                        to: 0.9
+                        duration: 200
+                    }
+                    NumberAnimation {
+                        target: ring
+                        property: "opacity"
+                        to: 0
+                        duration: 250
+                        easing.type: Easing.OutCubic
+                    }
+                }
+            }
+        }
         Icon {
             id: icon
             x: 4
@@ -106,6 +244,185 @@ Item {
             name: t.item.icon || "application-x-executable"
             recolor: false
             opacity: area.drag.active ? 0.3 : 1
+            transform: Translate {
+                x: t.w.position === "left" ? t.hop : t.w.position === "right" ? -t.hop : 0
+                y: t.w.position === "bottom" ? -t.hop : t.w.position === "top" ? t.hop : 0
+            }
+            // Depress darkens it while held: its silhouette in black over it.
+            Icon {
+                anchors.fill: parent
+                size: t.size
+                name: icon.name
+                recolor: true
+                color: "black"
+                opacity: t.dim
+                visible: opacity > 0
+            }
+        }
+        // Squish: smaller while held, springs back past full size on release.
+        NumberAnimation {
+            id: squishDown
+            target: icon
+            property: "scale"
+            to: 0.85
+            duration: 110
+            easing.type: Easing.OutCubic
+        }
+        SequentialAnimation {
+            id: squishUp
+            NumberAnimation {
+                target: icon
+                property: "scale"
+                to: 1.06
+                duration: 140
+                easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                target: icon
+                property: "scale"
+                to: 0.98
+                duration: 120
+                easing.type: Easing.InOutQuad
+            }
+            NumberAnimation {
+                target: icon
+                property: "scale"
+                to: 1
+                duration: 120
+                easing.type: Easing.InOutQuad
+            }
+        }
+        SequentialAnimation {
+            id: squishTap
+            ScriptAction {
+                script: squishDown.start()
+            }
+            PauseAnimation {
+                duration: 260
+            }
+            ScriptAction {
+                script: squishUp.start()
+            }
+        }
+        // Depress: sinks and darkens while held, like a key.
+        ParallelAnimation {
+            id: depressDown
+            NumberAnimation {
+                target: t
+                property: "hop"
+                to: -3
+                duration: 80
+                easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                target: t
+                property: "dim"
+                to: 0.2
+                duration: 80
+                easing.type: Easing.OutCubic
+            }
+        }
+        ParallelAnimation {
+            id: depressUp
+            NumberAnimation {
+                target: t
+                property: "hop"
+                to: 0
+                duration: 160
+                easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                target: t
+                property: "dim"
+                to: 0
+                duration: 160
+                easing.type: Easing.OutCubic
+            }
+        }
+        SequentialAnimation {
+            id: depressTap
+            ScriptAction {
+                script: depressDown.start()
+            }
+            PauseAnimation {
+                duration: 230
+            }
+            ScriptAction {
+                script: depressUp.start()
+            }
+        }
+        // Pop: a little larger, then back.
+        SequentialAnimation {
+            id: pop
+            NumberAnimation {
+                target: icon
+                property: "scale"
+                to: 1.15
+                duration: 90
+                easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                target: icon
+                property: "scale"
+                to: 1
+                duration: 170
+                easing.type: Easing.InOutQuad
+            }
+        }
+        // Bounce: two hops, the second lower.
+        SequentialAnimation {
+            id: bounce
+            NumberAnimation {
+                target: t
+                property: "hop"
+                to: 14
+                duration: 200
+                easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                target: t
+                property: "hop"
+                to: 0
+                duration: 180
+                easing.type: Easing.InCubic
+            }
+            NumberAnimation {
+                target: t
+                property: "hop"
+                to: 5
+                duration: 100
+                easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                target: t
+                property: "hop"
+                to: 0
+                duration: 140
+                easing.type: Easing.InCubic
+            }
+        }
+        // Launching: one hop at a time while the app has no window.
+        SequentialAnimation {
+            id: launchHop
+            NumberAnimation {
+                target: t
+                property: "hop"
+                to: 14
+                duration: 200
+                easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                target: t
+                property: "hop"
+                to: 0
+                duration: 180
+                easing.type: Easing.InCubic
+            }
+            PauseAnimation {
+                duration: 140
+            }
+            onFinished: if (t.launching)
+                Qt.callLater(launchHop.start)
         }
         Rectangle {
             visible: t.item.badge !== null && t.item.badge !== undefined
@@ -207,6 +524,7 @@ Item {
                 if (t.item.app)
                     t.w.call("NewInstance", { key: t.item.key });
             } else {
+                t.play(false);
                 t.activate();
             }
         }
@@ -277,6 +595,13 @@ Item {
             else if (Quickshell.env("NYX_DOCK_TEST_PREVIEW") === t.item.key)
                 preview.open();
         }
+    }
+    // NYX_DOCK_TEST_CLICK=<app>: its click animation every 1.5 s, without opening it.
+    Timer {
+        interval: 1500
+        repeat: true
+        running: Quickshell.env("NYX_DOCK_TEST_CLICK") === t.item.key
+        onTriggered: t.play(true)
     }
     PreviewPopup {
         id: preview

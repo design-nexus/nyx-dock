@@ -40,7 +40,10 @@ nyx-dock --ui        # which one is on
   reviews the removal as usual; it's there when Nyx Store is installed.
 - Click an app to open it, or to bring its most recent window forward (the one on the
   workspace in front of you if it has one). Click it again to go through its other
-  windows. Middle-click opens a new window.
+  windows. Middle-click opens a new window. The icon answers a click: it squishes while
+  you press it, or bounces (until a launching app's window opens), ripples, pops, glows or
+  sinks like a key, as Nyx Settings' Dock page (`click_animation`) chooses; none under
+  Reduce motion.
 - Rest the pointer on a running app to see its windows, including those on other
   workspaces and minimized ones; click one to go to it, or close it from its card.
 - A dot under a running app, two for more than one window; the app you're in gets an
@@ -116,6 +119,7 @@ position = "bottom"     # bottom | top | left | right
 hide_delay_ms = 600
 previews = true         # windows of a running app on hover
 preview_delay_ms = 350
+click_animation = "squish"  # squish | bounce | ripple | pop | glow | depress | none
 trash = true
 folder_counts = true    # item count badges on folders
 apps = true             # the Apps button
@@ -153,7 +157,8 @@ make -C hyprland-plugin    # the swipe plugin (needs Hyprland's headers)
 prints what it decides. For screenshots without a pointer, `NYX_DOCK_TEST_PREVIEW=<app>`,
 `NYX_DOCK_TEST_CARD=<app>`, `NYX_DOCK_TEST_FOLDER=1` (or `=menu`), `NYX_DOCK_TEST_APPS=1`
 and `NYX_DOCK_TEST_DOCK_MENU=1` open a preview, an app's card, the first folder (or its
-menu), the Apps panel or the dock's menu at start; `NYX_DOCK_TEST_OFFSET=0.5` holds the
+menu), the Apps panel or the dock's menu at start; `NYX_DOCK_TEST_CLICK=<app>` plays that
+app's click animation every 1.5 s (Quickshell dock); `NYX_DOCK_TEST_OFFSET=0.5` holds the
 bar that far through its slide out of sight. The service is `nyx-dock.service`
 (systemd user unit).
 

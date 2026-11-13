@@ -33,7 +33,7 @@ mod dock {
 use gio::prelude::*;
 use nyx_desktop::apps::Index;
 use nyx_desktop::{Desktop, Monitor, watch};
-use nyx_dock_core::config::{Config, Effective, Hide, Position, first_pins};
+use nyx_dock_core::config::{ClickAnimation, Config, Effective, Hide, Position, first_pins};
 use nyx_dock_core::hide::{Rect, clear_of_dock, fullscreen_on, mode_here, should_hide, should_hide_on};
 use nyx_dock_core::items::{self, Item, MINIMIZED};
 use nyx_dock_core::swipe::{SwipeEvent, resolve_loop};
@@ -312,7 +312,7 @@ fn publish(s: &Rc<Shared>) {
                 "global": {
                     "previews": c.previews, "preview_delay_ms": c.preview_delay_ms, "hide_delay_ms": c.hide_delay_ms,
                     "apps": c.apps, "app_names": c.app_names, "apps_search_bar": c.apps_search_bar, "trash": c.trash, "folder_counts": c.folder_counts,
-                    "window_controls": c.window_controls, "switcher": launch::switcher_installed(),
+                    "window_controls": c.window_controls, "click_animation": c.click_animation, "switcher": launch::switcher_installed(),
                     "settings_app": launch::settings_installed(), "store": launch::store_installed(),
                 },
                 "folders": folders,
@@ -831,6 +831,11 @@ fn handle(s: &Rc<Shared>, req: nyx_ui_link::Request) {
                     ("app_names", _) => c.app_names = v.as_bool().unwrap_or(c.app_names),
                     ("apps_search_bar", _) => c.apps_search_bar = v.as_bool().unwrap_or(c.apps_search_bar),
                     ("trash", _) => c.trash = v.as_bool().unwrap_or(c.trash),
+                    ("click_animation", _) => {
+                        if let Ok(a) = serde_json::from_value::<ClickAnimation>(v.clone()) {
+                            c.click_animation = a
+                        }
+                    }
                     _ => return req.err("invalid", format!("can't set {what}")),
                 }
             }
