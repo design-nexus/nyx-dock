@@ -1,10 +1,12 @@
 # Dock
 
-A floating app dock for [Omarchy](https://omarchy.org) and Hyprland. It sits at the
+A floating app dock for NyxOS and [Omarchy](https://omarchy.org). It sits at the
 bottom of each screen, steps aside when a window needs the space, and takes its colors
-from your Omarchy theme.
+from the desktop theme.
 
 ## Install
+
+On NyxOS, the dock comes with the system. On Omarchy:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/design-nexus/nyx-dock/main/install.sh | bash
